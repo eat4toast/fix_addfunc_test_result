@@ -1,0 +1,64 @@
+shh@shh:~/initialize_test$ sudo perf stat wasmedge_origin sub.wasm
+33315
+ Performance counter stats for 'wasmedge_origin sub.wasm':
+
+          3,359.07 msec task-clock                #    0.990 CPUs utilized          
+                16      context-switches          #    4.763 /sec                   
+                 2      cpu-migrations            #    0.595 /sec                   
+             1,597      page-faults               #  475.430 /sec                   
+    15,726,455,066      cycles                    #    4.682 GHz                    
+    47,176,743,840      instructions              #    3.00  insn per cycle         
+     9,337,125,553      branches                  #    2.780 G/sec                  
+        58,050,928      branch-misses             #    0.62% of all branches        
+    78,584,359,310      slots                     #   23.395 G/sec                  
+    46,485,082,456      topdown-retiring          #     59.0% retiring              
+     8,012,639,565      topdown-bad-spec          #     10.2% bad speculation       
+    21,571,010,515      topdown-fe-bound          #     27.4% frontend bound        
+     2,783,831,262      topdown-be-bound          #      3.5% backend bound         
+
+       3.392072307 seconds time elapsed
+
+       3.351628000 seconds user
+       0.007999000 seconds sys
+33315
+ Performance counter stats for 'wasmedge_origin sub.wasm':
+
+          3,363.68 msec task-clock                #    1.000 CPUs utilized          
+                13      context-switches          #    3.865 /sec                   
+                 3      cpu-migrations            #    0.892 /sec                   
+             1,593      page-faults               #  473.589 /sec                   
+    15,725,799,085      cycles                    #    4.675 GHz                    
+    47,176,681,818      instructions              #    3.00  insn per cycle         
+     9,337,115,672      branches                  #    2.776 G/sec                  
+        56,944,261      branch-misses             #    0.61% of all branches        
+    78,599,031,580      slots                     #   23.367 G/sec                  
+    46,838,744,586      topdown-retiring          #     59.5% retiring              
+     7,398,367,403      topdown-bad-spec          #      9.4% bad speculation       
+    21,882,407,515      topdown-fe-bound          #     27.8% frontend bound        
+     2,562,540,917      topdown-be-bound          #      3.3% backend bound         
+
+       3.364329791 seconds time elapsed
+
+       3.364220000 seconds user
+       0.000000000 seconds sys
+33315
+ Performance counter stats for 'wasmedge_origin sub.wasm':
+
+          3,383.90 msec task-clock                #    1.000 CPUs utilized          
+                 9      context-switches          #    2.660 /sec                   
+                 5      cpu-migrations            #    1.478 /sec                   
+             1,595      page-faults               #  471.349 /sec                   
+    15,788,910,105      cycles                    #    4.666 GHz                    
+    47,176,523,117      instructions              #    2.99  insn per cycle         
+     9,337,090,425      branches                  #    2.759 G/sec                  
+        58,207,672      branch-misses             #    0.62% of all branches        
+    78,882,471,820      slots                     #   23.311 G/sec                  
+    46,755,407,284      topdown-retiring          #     59.1% retiring              
+     7,733,842,296      topdown-bad-spec          #      9.8% bad speculation       
+    21,961,355,179      topdown-fe-bound          #     27.8% frontend bound        
+     2,595,279,965      topdown-be-bound          #      3.3% backend bound         
+
+       3.384432930 seconds time elapsed
+
+       3.384268000 seconds user
+       0.000000000 seconds sys

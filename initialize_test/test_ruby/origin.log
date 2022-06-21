@@ -1,0 +1,158 @@
+shh@shh:~/Downloads/rubywasn/ruby-head-wasm32-unknown-wasi-full/head-wasm32-unknown-wasi-full/usr/local/bin$ sudo perf stat wasmedge_origin --dir .:. ./ruby pi.rb 
+`RubyGems' were not loaded.
+`error_highlight' was not loaded.
+`did_you_mean' was not loaded.
+PI = 3.141590653589692
+
+ Performance counter stats for 'wasmedge_origin --dir .:. ./ruby pi.rb':
+
+          8,012.49 msec task-clock                #    1.000 CPUs utilized          
+                20      context-switches          #    2.496 /sec                   
+                 2      cpu-migrations            #    0.250 /sec                   
+            71,045      page-faults               #    8.867 K/sec                  
+    37,453,045,623      cycles                    #    4.674 GHz                    
+    88,308,649,678      instructions              #    2.36  insn per cycle         
+    20,876,035,809      branches                  #    2.605 G/sec                  
+       407,621,783      branch-misses             #    1.95% of all branches        
+   187,241,950,135      slots                     #   23.369 G/sec                  
+    78,531,798,545      topdown-retiring          #     41.8% retiring              
+    44,723,818,461      topdown-bad-spec          #     23.8% bad speculation       
+    57,197,180,097      topdown-fe-bound          #     30.4% frontend bound        
+     7,507,353,900      topdown-be-bound          #      4.0% backend bound         
+
+       8.013591121 seconds time elapsed
+
+       7.945409000 seconds user
+       0.068012000 seconds sys
+ Performance counter stats for 'wasmedge_origin --dir .:. ./ruby pi.rb':
+
+          8,156.36 msec task-clock                #    1.000 CPUs utilized          
+                25      context-switches          #    3.065 /sec                   
+                 2      cpu-migrations            #    0.245 /sec                   
+            71,045      page-faults               #    8.710 K/sec                  
+    38,187,708,864      cycles                    #    4.682 GHz                    
+    88,309,302,314      instructions              #    2.31  insn per cycle         
+    20,876,100,688      branches                  #    2.559 G/sec                  
+       432,715,952      branch-misses             #    2.07% of all branches        
+   190,931,638,015      slots                     #   23.409 G/sec                  
+    79,588,274,183      topdown-retiring          #     41.4% retiring              
+    46,354,422,697      topdown-bad-spec          #     24.1% bad speculation       
+    59,073,841,672      topdown-fe-bound          #     30.8% frontend bound        
+     7,004,997,331      topdown-be-bound          #      3.6% backend bound         
+
+       8.158715342 seconds time elapsed
+
+       8.085302000 seconds user
+       0.072011000 seconds sys
+ Performance counter stats for 'wasmedge_origin --dir .:. ./ruby pi.rb':
+
+          7,942.49 msec task-clock                #    1.000 CPUs utilized          
+                28      context-switches          #    3.525 /sec                   
+                 3      cpu-migrations            #    0.378 /sec                   
+            71,047      page-faults               #    8.945 K/sec                  
+    37,150,764,167      cycles                    #    4.677 GHz                    
+    88,308,474,294      instructions              #    2.38  insn per cycle         
+    20,875,925,987      branches                  #    2.628 G/sec                  
+       398,640,094      branch-misses             #    1.91% of all branches        
+   185,743,734,705      slots                     #   23.386 G/sec                  
+    79,359,133,664      topdown-retiring          #     42.5% retiring              
+    42,184,645,925      topdown-bad-spec          #     22.6% bad speculation       
+    57,466,456,125      topdown-fe-bound          #     30.8% frontend bound        
+     7,811,228,837      topdown-be-bound          #      4.2% backend bound         
+
+       7.944361679 seconds time elapsed
+
+       7.878930000 seconds user
+       0.063991000 seconds sys
+ Performance counter stats for 'wasmedge_origin --dir .:. ./ruby pi.rb':
+
+          7,933.24 msec task-clock                #    1.000 CPUs utilized          
+                38      context-switches          #    4.790 /sec                   
+                 4      cpu-migrations            #    0.504 /sec                   
+            71,047      page-faults               #    8.956 K/sec                  
+    37,155,657,213      cycles                    #    4.684 GHz                    
+    88,310,354,388      instructions              #    2.38  insn per cycle         
+    20,876,319,178      branches                  #    2.631 G/sec                  
+       400,127,221      branch-misses             #    1.92% of all branches        
+   185,746,387,560      slots                     #   23.414 G/sec                  
+    78,631,047,293      topdown-retiring          #     42.2% retiring              
+    43,638,513,174      topdown-bad-spec          #     23.4% bad speculation       
+    56,739,162,608      topdown-fe-bound          #     30.5% frontend bound        
+     7,218,206,569      topdown-be-bound          #      3.9% backend bound         
+
+       7.933969737 seconds time elapsed
+
+       7.873704000 seconds user
+       0.060012000 seconds sys
+
+=============================
+=============================
+=============================
+shh@shh:~/Downloads/rubywasn/ruby-head-wasm32-unknown-wasi-full/head-wasm32-unknown-wasi-full/usr/local/bin$ perf stat  wasmedge_origin --dir .:. ./ruby test_base64.rb  
+`RubyGems' were not loaded.
+`error_highlight' was not loaded.
+`did_you_mean' was not loaded.
+
+ Performance counter stats for 'wasmedge_origin --dir .:. ./ruby test_base64.rb':
+
+         13,849.42 msec task-clock                #    1.000 CPUs utilized          
+                66      context-switches          #    4.766 /sec                   
+                 3      cpu-migrations            #    0.217 /sec                   
+           112,154      page-faults               #    8.098 K/sec                  
+    64,826,021,496      cycles                    #    4.681 GHz                    
+   176,931,281,671      instructions              #    2.73  insn per cycle         
+    37,106,168,063      branches                  #    2.679 G/sec                  
+       319,986,768      branch-misses             #    0.86% of all branches        
+   323,773,815,605      slots                     #   23.378 G/sec                  
+   154,887,865,968      topdown-retiring          #     47.1% retiring              
+    68,506,830,373      topdown-bad-spec          #     20.8% bad speculation       
+    98,324,513,061      topdown-fe-bound          #     29.9% frontend bound        
+     7,378,282,514      topdown-be-bound          #      2.2% backend bound         
+
+      13.850901184 seconds time elapsed
+
+      13.766012000 seconds user
+       0.084012000 seconds sys
+ Performance counter stats for 'wasmedge_origin --dir .:. ./ruby test_base64.rb':
+
+         13,944.63 msec task-clock                #    1.000 CPUs utilized          
+                62      context-switches          #    4.446 /sec                   
+                 2      cpu-migrations            #    0.143 /sec                   
+           112,151      page-faults               #    8.043 K/sec                  
+    65,238,217,045      cycles                    #    4.678 GHz                    
+   176,931,840,854      instructions              #    2.71  insn per cycle         
+    37,106,284,986      branches                  #    2.661 G/sec                  
+       314,359,607      branch-misses             #    0.85% of all branches        
+   325,718,528,755      slots                     #   23.358 G/sec                  
+   155,815,044,998      topdown-retiring          #     46.6% retiring              
+    72,743,641,730      topdown-bad-spec          #     21.8% bad speculation       
+    94,578,569,025      topdown-fe-bound          #     28.3% frontend bound        
+    11,037,815,893      topdown-be-bound          #      3.3% backend bound         
+
+      13.946085888 seconds time elapsed
+
+      13.836757000 seconds user
+       0.108005000 seconds sys
+ Performance counter stats for 'wasmedge_origin --dir .:. ./ruby test_base64.rb':
+
+         13,872.08 msec task-clock                #    1.000 CPUs utilized          
+                68      context-switches          #    4.902 /sec                   
+                12      cpu-migrations            #    0.865 /sec                   
+           112,155      page-faults               #    8.085 K/sec                  
+    64,864,624,879      cycles                    #    4.676 GHz                    
+   176,930,915,300      instructions              #    2.73  insn per cycle         
+    37,106,219,302      branches                  #    2.675 G/sec                  
+       321,195,624      branch-misses             #    0.87% of all branches        
+   323,683,849,915      slots                     #   23.333 G/sec                  
+   153,612,909,378      topdown-retiring          #     45.8% retiring              
+    71,019,335,974      topdown-bad-spec          #     21.2% bad speculation       
+   101,455,918,829      topdown-fe-bound          #     30.2% frontend bound        
+     9,572,638,483      topdown-be-bound          #      2.9% backend bound         
+
+      13.873650956 seconds time elapsed
+
+      13.764403000 seconds user
+       0.108003000 seconds sys
+
+==================================
+==================================

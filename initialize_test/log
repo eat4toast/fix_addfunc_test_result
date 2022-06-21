@@ -1,0 +1,28 @@
+shh@shh:~/Downloads/rubywasn/ruby-head-wasm32-unknown-wasi-full/head-wasm32-unknown-wasi-full/usr/local/bin$ wasmedge --dir .:. ./ruby test_base64.rb 
+`RubyGems' were not loaded.
+`error_highlight' was not loaded.
+`did_you_mean' was not loaded.
+if count: 0 else count: 6648
+
+
+shh@shh:~/Downloads/rubywasn/ruby-head-wasm32-unknown-wasi-full/head-wasm32-unknown-wasi-full/usr/local/bin$ wasmedge --dir .:. ./ruby  pi.rb 
+`RubyGems' were not loaded.
+`error_highlight' was not loaded.
+`did_you_mean' was not loaded.
+PI = 3.141590653589692
+if count: 0 else count: 6648
+
+
+shh@shh:~/initialize_test$ wasmedge sub.wasm 
+33315if count: 0 else count: 605
+
+***
+Under Ubuntu2004
+
+Method:
+    Run each test case 3 times and measure the avg time.
+
+Conclusion:
+    ruby container seems takes much more branch miss, but the time (cpu clock) not reduce even worse!
+    cpp code takes less and cost time same as before
+***

@@ -1,0 +1,2104 @@
+<?xml version="1.0" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg version="1.1" width="1200" height="790" onload="init(evt)" viewBox="0 0 1200 790" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+<!-- Flame graph stack visualization. See https://github.com/brendangregg/FlameGraph for latest version, and http://www.brendangregg.com/flamegraphs.html for examples. -->
+<!-- NOTES:  -->
+<defs>
+	<linearGradient id="background" y1="0" y2="1" x1="0" x2="0" >
+		<stop stop-color="#eeeeee" offset="5%" />
+		<stop stop-color="#eeeeb0" offset="95%" />
+	</linearGradient>
+</defs>
+<style type="text/css">
+	text { font-family:Verdana; font-size:12px; fill:rgb(0,0,0); }
+	#search, #ignorecase { opacity:0.1; cursor:pointer; }
+	#search:hover, #search.show, #ignorecase:hover, #ignorecase.show { opacity:1; }
+	#subtitle { text-anchor:middle; font-color:rgb(160,160,160); }
+	#title { text-anchor:middle; font-size:17px}
+	#unzoom { cursor:pointer; }
+	#frames > *:hover { stroke:black; stroke-width:0.5; cursor:pointer; }
+	.hide { display:none; }
+	.parent { opacity:0.5; }
+</style>
+<script type="text/ecmascript">
+<![CDATA[
+	"use strict";
+	var details, searchbtn, unzoombtn, matchedtxt, svg, searching, currentSearchTerm, ignorecase, ignorecaseBtn;
+	function init(evt) {
+		details = document.getElementById("details").firstChild;
+		searchbtn = document.getElementById("search");
+		ignorecaseBtn = document.getElementById("ignorecase");
+		unzoombtn = document.getElementById("unzoom");
+		matchedtxt = document.getElementById("matched");
+		svg = document.getElementsByTagName("svg")[0];
+		searching = 0;
+		currentSearchTerm = null;
+
+		// use GET parameters to restore a flamegraphs state.
+		var params = get_params();
+		if (params.x && params.y)
+			zoom(find_group(document.querySelector('[x="' + params.x + '"][y="' + params.y + '"]')));
+                if (params.s) search(params.s);
+	}
+
+	// event listeners
+	window.addEventListener("click", function(e) {
+		var target = find_group(e.target);
+		if (target) {
+			if (target.nodeName == "a") {
+				if (e.ctrlKey === false) return;
+				e.preventDefault();
+			}
+			if (target.classList.contains("parent")) unzoom();
+			zoom(target);
+			if (!document.querySelector('.parent')) {
+				clearzoom();
+				return;
+			}
+
+			// set parameters for zoom state
+			var el = target.querySelector("rect");
+			if (el && el.attributes && el.attributes.y && el.attributes._orig_x) {
+				var params = get_params()
+				params.x = el.attributes._orig_x.value;
+				params.y = el.attributes.y.value;
+				history.replaceState(null, null, parse_params(params));
+			}
+		}
+		else if (e.target.id == "unzoom") clearzoom();
+		else if (e.target.id == "search") search_prompt();
+		else if (e.target.id == "ignorecase") toggle_ignorecase();
+	}, false)
+
+	// mouse-over for info
+	// show
+	window.addEventListener("mouseover", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = "Function: " + g_to_text(target);
+	}, false)
+
+	// clear
+	window.addEventListener("mouseout", function(e) {
+		var target = find_group(e.target);
+		if (target) details.nodeValue = ' ';
+	}, false)
+
+	// ctrl-F for search
+	// ctrl-I to toggle case-sensitive search
+	window.addEventListener("keydown",function (e) {
+		if (e.keyCode === 114 || (e.ctrlKey && e.keyCode === 70)) {
+			e.preventDefault();
+			search_prompt();
+		}
+		else if (e.ctrlKey && e.keyCode === 73) {
+			e.preventDefault();
+			toggle_ignorecase();
+		}
+	}, false)
+
+	// functions
+	function get_params() {
+		var params = {};
+		var paramsarr = window.location.search.substr(1).split('&');
+		for (var i = 0; i < paramsarr.length; ++i) {
+			var tmp = paramsarr[i].split("=");
+			if (!tmp[0] || !tmp[1]) continue;
+			params[tmp[0]]  = decodeURIComponent(tmp[1]);
+		}
+		return params;
+	}
+	function parse_params(params) {
+		var uri = "?";
+		for (var key in params) {
+			uri += key + '=' + encodeURIComponent(params[key]) + '&';
+		}
+		if (uri.slice(-1) == "&")
+			uri = uri.substring(0, uri.length - 1);
+		if (uri == '?')
+			uri = window.location.href.split('?')[0];
+		return uri;
+	}
+	function find_child(node, selector) {
+		var children = node.querySelectorAll(selector);
+		if (children.length) return children[0];
+	}
+	function find_group(node) {
+		var parent = node.parentElement;
+		if (!parent) return;
+		if (parent.id == "frames") return node;
+		return find_group(parent);
+	}
+	function orig_save(e, attr, val) {
+		if (e.attributes["_orig_" + attr] != undefined) return;
+		if (e.attributes[attr] == undefined) return;
+		if (val == undefined) val = e.attributes[attr].value;
+		e.setAttribute("_orig_" + attr, val);
+	}
+	function orig_load(e, attr) {
+		if (e.attributes["_orig_"+attr] == undefined) return;
+		e.attributes[attr].value = e.attributes["_orig_" + attr].value;
+		e.removeAttribute("_orig_"+attr);
+	}
+	function g_to_text(e) {
+		var text = find_child(e, "title").firstChild.nodeValue;
+		return (text)
+	}
+	function g_to_func(e) {
+		var func = g_to_text(e);
+		// if there's any manipulation we want to do to the function
+		// name before it's searched, do it here before returning.
+		return (func);
+	}
+	function update_text(e) {
+		var r = find_child(e, "rect");
+		var t = find_child(e, "text");
+		var w = parseFloat(r.attributes.width.value) -3;
+		var txt = find_child(e, "title").textContent.replace(/\([^(]*\)$/,"");
+		t.attributes.x.value = parseFloat(r.attributes.x.value) + 3;
+
+		// Smaller than this size won't fit anything
+		if (w < 2 * 12 * 0.59) {
+			t.textContent = "";
+			return;
+		}
+
+		t.textContent = txt;
+		// Fit in full text width
+		if (/^ *$/.test(txt) || t.getSubStringLength(0, txt.length) < w)
+			return;
+
+		for (var x = txt.length - 2; x > 0; x--) {
+			if (t.getSubStringLength(0, x + 2) <= w) {
+				t.textContent = txt.substring(0, x) + "..";
+				return;
+			}
+		}
+		t.textContent = "";
+	}
+
+	// zoom
+	function zoom_reset(e) {
+		if (e.attributes != undefined) {
+			orig_load(e, "x");
+			orig_load(e, "width");
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_reset(c[i]);
+		}
+	}
+	function zoom_child(e, x, ratio) {
+		if (e.attributes != undefined) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = (parseFloat(e.attributes.x.value) - x - 10) * ratio + 10;
+				if (e.tagName == "text")
+					e.attributes.x.value = find_child(e.parentNode, "rect[x]").attributes.x.value + 3;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseFloat(e.attributes.width.value) * ratio;
+			}
+		}
+
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_child(c[i], x - 10, ratio);
+		}
+	}
+	function zoom_parent(e) {
+		if (e.attributes) {
+			if (e.attributes.x != undefined) {
+				orig_save(e, "x");
+				e.attributes.x.value = 10;
+			}
+			if (e.attributes.width != undefined) {
+				orig_save(e, "width");
+				e.attributes.width.value = parseInt(svg.width.baseVal.value) - (10 * 2);
+			}
+		}
+		if (e.childNodes == undefined) return;
+		for (var i = 0, c = e.childNodes; i < c.length; i++) {
+			zoom_parent(c[i]);
+		}
+	}
+	function zoom(node) {
+		var attr = find_child(node, "rect").attributes;
+		var width = parseFloat(attr.width.value);
+		var xmin = parseFloat(attr.x.value);
+		var xmax = parseFloat(xmin + width);
+		var ymin = parseFloat(attr.y.value);
+		var ratio = (svg.width.baseVal.value - 2 * 10) / width;
+
+		// XXX: Workaround for JavaScript float issues (fix me)
+		var fudge = 0.0001;
+
+		unzoombtn.classList.remove("hide");
+
+		var el = document.getElementById("frames").children;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var a = find_child(e, "rect").attributes;
+			var ex = parseFloat(a.x.value);
+			var ew = parseFloat(a.width.value);
+			var upstack;
+			// Is it an ancestor
+			if (0 == 0) {
+				upstack = parseFloat(a.y.value) > ymin;
+			} else {
+				upstack = parseFloat(a.y.value) < ymin;
+			}
+			if (upstack) {
+				// Direct ancestor
+				if (ex <= xmin && (ex+ew+fudge) >= xmax) {
+					e.classList.add("parent");
+					zoom_parent(e);
+					update_text(e);
+				}
+				// not in current path
+				else
+					e.classList.add("hide");
+			}
+			// Children maybe
+			else {
+				// no common path
+				if (ex < xmin || ex + fudge >= xmax) {
+					e.classList.add("hide");
+				}
+				else {
+					zoom_child(e, xmin, ratio);
+					update_text(e);
+				}
+			}
+		}
+		search();
+	}
+	function unzoom() {
+		unzoombtn.classList.add("hide");
+		var el = document.getElementById("frames").children;
+		for(var i = 0; i < el.length; i++) {
+			el[i].classList.remove("parent");
+			el[i].classList.remove("hide");
+			zoom_reset(el[i]);
+			update_text(el[i]);
+		}
+		search();
+	}
+	function clearzoom() {
+		unzoom();
+
+		// remove zoom state
+		var params = get_params();
+		if (params.x) delete params.x;
+		if (params.y) delete params.y;
+		history.replaceState(null, null, parse_params(params));
+	}
+
+	// search
+	function toggle_ignorecase() {
+		ignorecase = !ignorecase;
+		if (ignorecase) {
+			ignorecaseBtn.classList.add("show");
+		} else {
+			ignorecaseBtn.classList.remove("show");
+		}
+		reset_search();
+		search();
+	}
+	function reset_search() {
+		var el = document.querySelectorAll("#frames rect");
+		for (var i = 0; i < el.length; i++) {
+			orig_load(el[i], "fill")
+		}
+		var params = get_params();
+		delete params.s;
+		history.replaceState(null, null, parse_params(params));
+	}
+	function search_prompt() {
+		if (!searching) {
+			var term = prompt("Enter a search term (regexp " +
+			    "allowed, eg: ^ext4_)"
+			    + (ignorecase ? ", ignoring case" : "")
+			    + "\nPress Ctrl-i to toggle case sensitivity", "");
+			if (term != null) search(term);
+		} else {
+			reset_search();
+			searching = 0;
+			currentSearchTerm = null;
+			searchbtn.classList.remove("show");
+			searchbtn.firstChild.nodeValue = "Search"
+			matchedtxt.classList.add("hide");
+			matchedtxt.firstChild.nodeValue = ""
+		}
+	}
+	function search(term) {
+		if (term) currentSearchTerm = term;
+
+		var re = new RegExp(currentSearchTerm, ignorecase ? 'i' : '');
+		var el = document.getElementById("frames").children;
+		var matches = new Object();
+		var maxwidth = 0;
+		for (var i = 0; i < el.length; i++) {
+			var e = el[i];
+			var func = g_to_func(e);
+			var rect = find_child(e, "rect");
+			if (func == null || rect == null)
+				continue;
+
+			// Save max width. Only works as we have a root frame
+			var w = parseFloat(rect.attributes.width.value);
+			if (w > maxwidth)
+				maxwidth = w;
+
+			if (func.match(re)) {
+				// highlight
+				var x = parseFloat(rect.attributes.x.value);
+				orig_save(rect, "fill");
+				rect.attributes.fill.value = "rgb(230,0,230)";
+
+				// remember matches
+				if (matches[x] == undefined) {
+					matches[x] = w;
+				} else {
+					if (w > matches[x]) {
+						// overwrite with parent
+						matches[x] = w;
+					}
+				}
+				searching = 1;
+			}
+		}
+		if (!searching)
+			return;
+		var params = get_params();
+		params.s = currentSearchTerm;
+		history.replaceState(null, null, parse_params(params));
+
+		searchbtn.classList.add("show");
+		searchbtn.firstChild.nodeValue = "Reset Search";
+
+		// calculate percent matched, excluding vertical overlap
+		var count = 0;
+		var lastx = -1;
+		var lastw = 0;
+		var keys = Array();
+		for (k in matches) {
+			if (matches.hasOwnProperty(k))
+				keys.push(k);
+		}
+		// sort the matched frames by their x location
+		// ascending, then width descending
+		keys.sort(function(a, b){
+			return a - b;
+		});
+		// Step through frames saving only the biggest bottom-up frames
+		// thanks to the sort order. This relies on the tree property
+		// where children are always smaller than their parents.
+		var fudge = 0.0001;	// JavaScript floating point
+		for (var k in keys) {
+			var x = parseFloat(keys[k]);
+			var w = matches[keys[k]];
+			if (x >= lastx + lastw - fudge) {
+				count += w;
+				lastx = x;
+				lastw = w;
+			}
+		}
+		// display matched percent
+		matchedtxt.classList.remove("hide");
+		var pct = 100 * count / maxwidth;
+		if (pct != 100) pct = pct.toFixed(1)
+		matchedtxt.firstChild.nodeValue = "Matched: " + pct + "%";
+	}
+]]>
+</script>
+<rect x="0.0" y="0" width="1200.0" height="790.0" fill="url(#background)"  />
+<text id="title" x="600.00" y="24" >Flame Graph</text>
+<text id="details" x="10.00" y="773" > </text>
+<text id="unzoom" x="10.00" y="24" class="hide">Reset Zoom</text>
+<text id="search" x="1090.00" y="24" >Search</text>
+<text id="ignorecase" x="1174.00" y="24" >ic</text>
+<text id="matched" x="1090.00" y="773" > </text>
+<g id="frames">
+<g >
+<title>std::__detail::__variant::_Variant_storage&lt;false, WasmEdge::Runtime::Instance::FunctionInstance::WasmFunction, WasmEdge::Symbol&lt;void&gt;, std::unique_ptr&lt;WasmEdge::Runtime::HostFunctionBase, std::default_delete&lt;WasmEdge::Runtime::HostFunctionBase&gt; &gt; &gt;::~_Variant_storage (2 samples, 0.25%)</title><rect x="1184.1" y="357" width="2.9" height="15.0" fill="rgb(236,90,42)" rx="2" ry="2" />
+<text  x="1187.07" y="367.5" ></text>
+</g>
+<g >
+<title>loadSectionContentVec&lt;WasmEdge::AST::CodeSection, WasmEdge::Loader::Loader::loadSection (13 samples, 1.63%)</title><rect x="13.0" y="389" width="19.2" height="15.0" fill="rgb(211,16,5)" rx="2" ry="2" />
+<text  x="15.96" y="399.5" ></text>
+</g>
+<g >
+<title>__perf_event_task_sched_in (1 samples, 0.13%)</title><rect x="24.8" y="181" width="1.5" height="15.0" fill="rgb(235,228,42)" rx="2" ry="2" />
+<text  x="27.82" y="191.5" ></text>
+</g>
+<g >
+<title>WasmEdge::AST::Instruction::setLabelListSize (1 samples, 0.13%)</title><rect x="18.9" y="293" width="1.5" height="15.0" fill="rgb(238,145,53)" rx="2" ry="2" />
+<text  x="21.89" y="303.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runGlobalGetOp (44 samples, 5.53%)</title><rect x="485.9" y="373" width="65.2" height="15.0" fill="rgb(214,131,54)" rx="2" ry="2" />
+<text  x="488.85" y="383.5" >WasmEdg..</text>
+</g>
+<g >
+<title>WasmEdge::Runtime::Instance::MemoryInstance::loadValue&lt;unsigned int, 1u&gt; (2 samples, 0.25%)</title><rect x="617.8" y="357" width="3.0" height="15.0" fill="rgb(231,121,13)" rx="2" ry="2" />
+<text  x="620.79" y="367.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::execute (771 samples, 96.86%)</title><rect x="32.2" y="405" width="1143.0" height="15.0" fill="rgb(235,211,24)" rx="2" ry="2" />
+<text  x="35.24" y="415.5" >WasmEdge::Executor::Executor::execute</text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (6 samples, 0.75%)</title><rect x="542.2" y="341" width="8.9" height="15.0" fill="rgb(249,201,35)" rx="2" ry="2" />
+<text  x="545.19" y="351.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_base (2 samples, 0.25%)</title><rect x="723.0" y="293" width="3.0" height="15.0" fill="rgb(238,57,14)" rx="2" ry="2" />
+<text  x="726.04" y="303.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runLoadOp&lt;unsigned int, 16u&gt; (1 samples, 0.13%)</title><rect x="586.7" y="373" width="1.4" height="15.0" fill="rgb(248,212,54)" rx="2" ry="2" />
+<text  x="589.66" y="383.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runGeOp&lt;int&gt; (1 samples, 0.13%)</title><rect x="752.7" y="373" width="1.5" height="15.0" fill="rgb(214,58,33)" rx="2" ry="2" />
+<text  x="755.69" y="383.5" ></text>
+</g>
+<g >
+<title>do_execveat_common.isra.0 (1 samples, 0.13%)</title><rect x="10.0" y="661" width="1.5" height="15.0" fill="rgb(225,185,51)" rx="2" ry="2" />
+<text  x="13.00" y="671.5" ></text>
+</g>
+<g >
+<title>page_remove_rmap (1 samples, 0.13%)</title><rect x="1187.0" y="533" width="1.5" height="15.0" fill="rgb(232,19,18)" rx="2" ry="2" />
+<text  x="1190.04" y="543.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runShrOp&lt;unsigned int&gt; (1 samples, 0.13%)</title><rect x="970.6" y="373" width="1.5" height="15.0" fill="rgb(220,133,26)" rx="2" ry="2" />
+<text  x="973.60" y="383.5" ></text>
+</g>
+<g >
+<title>std::apply&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (789 samples, 99.12%)</title><rect x="13.0" y="565" width="1169.6" height="15.0" fill="rgb(229,28,40)" rx="2" ry="2" />
+<text  x="15.96" y="575.5" >std::apply&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned lon..</text>
+</g>
+<g >
+<title>std::__future_base::_State_baseV2::wait (1 samples, 0.13%)</title><rect x="1182.6" y="613" width="1.5" height="15.0" fill="rgb(241,81,23)" rx="2" ry="2" />
+<text  x="1185.59" y="623.5" ></text>
+</g>
+<g >
+<title>start_thread (789 samples, 99.12%)</title><rect x="13.0" y="693" width="1169.6" height="15.0" fill="rgb(231,56,31)" rx="2" ry="2" />
+<text  x="15.96" y="703.5" >start_thread</text>
+</g>
+<g >
+<title>bprm_execve (1 samples, 0.13%)</title><rect x="10.0" y="645" width="1.5" height="15.0" fill="rgb(215,88,9)" rx="2" ry="2" />
+<text  x="13.00" y="655.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::branchToLabel (4 samples, 0.50%)</title><rect x="462.1" y="357" width="6.0" height="15.0" fill="rgb(225,31,43)" rx="2" ry="2" />
+<text  x="465.14" y="367.5" ></text>
+</g>
+<g >
+<title>__sched_text_start (1 samples, 0.13%)</title><rect x="24.8" y="213" width="1.5" height="15.0" fill="rgb(253,169,17)" rx="2" ry="2" />
+<text  x="27.82" y="223.5" ></text>
+</g>
+<g >
+<title>cxx20::expected&lt;void, WasmEdge::ErrCode&gt;::expected (15 samples, 1.88%)</title><rect x="690.4" y="357" width="22.3" height="15.0" fill="rgb(217,62,31)" rx="2" ry="2" />
+<text  x="693.43" y="367.5" >c..</text>
+</g>
+<g >
+<title>cxx20::detail::expected_storage_base&lt;void, WasmEdge::ErrCode, false, true&gt;::expected_storage_base (7 samples, 0.88%)</title><rect x="1164.8" y="261" width="10.4" height="15.0" fill="rgb(212,15,25)" rx="2" ry="2" />
+<text  x="1167.80" y="271.5" ></text>
+</g>
+<g >
+<title>cxx20::expected&lt;void, WasmEdge::ErrCode&gt;::expected (8 samples, 1.01%)</title><rect x="740.8" y="357" width="11.9" height="15.0" fill="rgb(243,124,44)" rx="2" ry="2" />
+<text  x="743.83" y="367.5" ></text>
+</g>
+<g >
+<title>unmap_page_range (2 samples, 0.25%)</title><rect x="1187.0" y="565" width="3.0" height="15.0" fill="rgb(215,114,34)" rx="2" ry="2" />
+<text  x="1190.04" y="575.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_operations_base&lt;void, WasmEdge::ErrCode&gt;::expected_operations_base (1 samples, 0.13%)</title><rect x="752.7" y="277" width="1.5" height="15.0" fill="rgb(216,48,42)" rx="2" ry="2" />
+<text  x="755.69" y="287.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Validator::Validator::validate (5 samples, 0.63%)</title><rect x="1175.2" y="453" width="7.4" height="15.0" fill="rgb(217,74,31)" rx="2" ry="2" />
+<text  x="1178.18" y="463.5" ></text>
+</g>
+<g >
+<title>sysmalloc (1 samples, 0.13%)</title><rect x="27.8" y="181" width="1.5" height="15.0" fill="rgb(208,219,36)" rx="2" ry="2" />
+<text  x="30.79" y="191.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (1 samples, 0.13%)</title><rect x="554.0" y="341" width="1.5" height="15.0" fill="rgb(207,136,0)" rx="2" ry="2" />
+<text  x="557.05" y="351.5" ></text>
+</g>
+<g >
+<title>std::__detail::__variant::__gen_vtable_impl&lt;true, std::__detail::__variant::_Multi_array&lt;std::__detail::__variant::__variant_cookie  (2 samples, 0.25%)</title><rect x="1184.1" y="261" width="2.9" height="15.0" fill="rgb(213,35,34)" rx="2" ry="2" />
+<text  x="1187.07" y="271.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Validator::FormChecker::checkInstr (2 samples, 0.25%)</title><rect x="1179.6" y="341" width="3.0" height="15.0" fill="rgb(211,122,16)" rx="2" ry="2" />
+<text  x="1182.62" y="351.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::new_allocator&lt;std::pair&lt;unsigned int, WasmEdge::ValType&gt; &gt;::deallocate (1 samples, 0.13%)</title><rect x="1185.6" y="101" width="1.4" height="15.0" fill="rgb(241,153,14)" rx="2" ry="2" />
+<text  x="1188.55" y="111.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (2 samples, 0.25%)</title><rect x="943.9" y="325" width="3.0" height="15.0" fill="rgb(227,114,44)" rx="2" ry="2" />
+<text  x="946.92" y="335.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runEqzOp&lt;unsigned int&gt; (18 samples, 2.26%)</title><rect x="726.0" y="373" width="26.7" height="15.0" fill="rgb(221,151,52)" rx="2" ry="2" />
+<text  x="729.01" y="383.5" >W..</text>
+</g>
+<g >
+<title>schedule (1 samples, 0.13%)</title><rect x="24.8" y="229" width="1.5" height="15.0" fill="rgb(253,227,50)" rx="2" ry="2" />
+<text  x="27.82" y="239.5" ></text>
+</g>
+<g >
+<title>syscall (1 samples, 0.13%)</title><rect x="1182.6" y="533" width="1.5" height="15.0" fill="rgb(231,66,9)" rx="2" ry="2" />
+<text  x="1185.59" y="543.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_operations_base&lt;void, WasmEdge::ErrCode&gt;::expected_operations_base (2 samples, 0.25%)</title><rect x="985.4" y="277" width="3.0" height="15.0" fill="rgb(229,126,38)" rx="2" ry="2" />
+<text  x="988.43" y="287.5" ></text>
+</g>
+<g >
+<title>perf-exec (1 samples, 0.13%)</title><rect x="10.0" y="725" width="1.5" height="15.0" fill="rgb(227,49,30)" rx="2" ry="2" />
+<text  x="13.00" y="735.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Runtime::StackManager::Frame, std::allocator&lt;WasmEdge::Runtime::StackManager::Frame&gt; &gt;::size (1 samples, 0.13%)</title><rect x="998.8" y="357" width="1.5" height="15.0" fill="rgb(231,125,27)" rx="2" ry="2" />
+<text  x="1001.77" y="367.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runGlobalSetOp (3 samples, 0.38%)</title><rect x="551.1" y="373" width="4.4" height="15.0" fill="rgb(218,135,29)" rx="2" ry="2" />
+<text  x="554.08" y="383.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::pop (28 samples, 3.52%)</title><rect x="1000.3" y="373" width="41.5" height="15.0" fill="rgb(217,0,35)" rx="2" ry="2" />
+<text  x="1003.25" y="383.5" >Was..</text>
+</g>
+<g >
+<title>std::variant&lt;WasmEdge::Runtime::Instance::FunctionInstance::WasmFunction, WasmEdge::Symbol&lt;void&gt;, std::unique_ptr&lt;WasmEdge::Runtime::HostFunctionBase, std::default_delete&lt;WasmEdge::Runtime::HostFunctionBase&gt; &gt; &gt;::~variant (2 samples, 0.25%)</title><rect x="1184.1" y="453" width="2.9" height="15.0" fill="rgb(205,218,8)" rx="2" ry="2" />
+<text  x="1187.07" y="463.5" ></text>
+</g>
+<g >
+<title>do_user_addr_fault (1 samples, 0.13%)</title><rect x="27.8" y="133" width="1.5" height="15.0" fill="rgb(222,172,15)" rx="2" ry="2" />
+<text  x="30.79" y="143.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (1 samples, 0.13%)</title><rect x="1182.6" y="501" width="1.5" height="15.0" fill="rgb(224,123,23)" rx="2" ry="2" />
+<text  x="1185.59" y="511.5" ></text>
+</g>
+<g >
+<title>exit_to_user_mode_prepare (1 samples, 0.13%)</title><rect x="24.8" y="245" width="1.5" height="15.0" fill="rgb(239,134,11)" rx="2" ry="2" />
+<text  x="27.82" y="255.5" ></text>
+</g>
+<g >
+<title>free_pages_and_swap_cache (1 samples, 0.13%)</title><rect x="1188.5" y="517" width="1.5" height="15.0" fill="rgb(254,91,31)" rx="2" ry="2" />
+<text  x="1191.52" y="527.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_base (7 samples, 0.88%)</title><rect x="1164.8" y="325" width="10.4" height="15.0" fill="rgb(206,194,21)" rx="2" ry="2" />
+<text  x="1167.80" y="335.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (12 samples, 1.51%)</title><rect x="629.6" y="357" width="17.8" height="15.0" fill="rgb(254,89,22)" rx="2" ry="2" />
+<text  x="632.65" y="367.5" ></text>
+</g>
+<g >
+<title>std::__invoke&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (789 samples, 99.12%)</title><rect x="13.0" y="533" width="1169.6" height="15.0" fill="rgb(232,226,20)" rx="2" ry="2" />
+<text  x="15.96" y="543.5" >std::__invoke&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned ..</text>
+</g>
+<g >
+<title>cxx20::detail::expected_view_base&lt;void, WasmEdge::ErrCode&gt;::expected_view_base (8 samples, 1.01%)</title><rect x="740.8" y="261" width="11.9" height="15.0" fill="rgb(222,142,15)" rx="2" ry="2" />
+<text  x="743.83" y="271.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_base (7 samples, 0.88%)</title><rect x="1164.8" y="309" width="10.4" height="15.0" fill="rgb(205,191,2)" rx="2" ry="2" />
+<text  x="1167.80" y="319.5" ></text>
+</g>
+<g >
+<title>tlb_flush_mmu (1 samples, 0.13%)</title><rect x="1188.5" y="533" width="1.5" height="15.0" fill="rgb(205,155,12)" rx="2" ry="2" />
+<text  x="1191.52" y="543.5" ></text>
+</g>
+<g >
+<title>std::__uninitialized_move_if_noexcept_a&lt;WasmEdge::AST::Instruction*, WasmEdge::AST::Instruction*, std::allocator&lt;WasmEdge::AST::Instruction&gt; &gt; (1 samples, 0.13%)</title><rect x="30.8" y="277" width="1.4" height="15.0" fill="rgb(208,204,42)" rx="2" ry="2" />
+<text  x="33.75" y="287.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (12 samples, 1.51%)</title><rect x="629.6" y="341" width="17.8" height="15.0" fill="rgb(224,199,31)" rx="2" ry="2" />
+<text  x="632.65" y="351.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (4 samples, 0.50%)</title><rect x="949.8" y="341" width="6.0" height="15.0" fill="rgb(234,131,20)" rx="2" ry="2" />
+<text  x="952.85" y="351.5" ></text>
+</g>
+<g >
+<title>std::_Construct&lt;WasmEdge::AST::Instruction, WasmEdge::AST::Instruction const&amp;&gt; (1 samples, 0.13%)</title><rect x="30.8" y="213" width="1.4" height="15.0" fill="rgb(218,165,36)" rx="2" ry="2" />
+<text  x="33.75" y="223.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_operations_base&lt;void, WasmEdge::ErrCode&gt;::expected_operations_base (9 samples, 1.13%)</title><rect x="972.1" y="277" width="13.3" height="15.0" fill="rgb(218,227,7)" rx="2" ry="2" />
+<text  x="975.09" y="287.5" ></text>
+</g>
+<g >
+<title>free_pcppages_bulk (1 samples, 0.13%)</title><rect x="1188.5" y="453" width="1.5" height="15.0" fill="rgb(205,115,39)" rx="2" ry="2" />
+<text  x="1191.52" y="463.5" ></text>
+</g>
+<g >
+<title>std::_Destroy&lt;WasmEdge::Runtime::Instance::FunctionInstance::WasmFunction&gt; (2 samples, 0.25%)</title><rect x="1184.1" y="197" width="2.9" height="15.0" fill="rgb(249,202,22)" rx="2" ry="2" />
+<text  x="1187.07" y="207.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_operations_base&lt;void, WasmEdge::ErrCode&gt;::expected_operations_base (1 samples, 0.13%)</title><rect x="970.6" y="277" width="1.5" height="15.0" fill="rgb(212,129,19)" rx="2" ry="2" />
+<text  x="973.60" y="287.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VariadicUnion&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (2 samples, 0.25%)</title><rect x="720.1" y="341" width="2.9" height="15.0" fill="rgb(227,68,51)" rx="2" ry="2" />
+<text  x="723.08" y="351.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::Instance::ModuleInstance::getFunc (4 samples, 0.50%)</title><rect x="479.9" y="357" width="6.0" height="15.0" fill="rgb(215,31,24)" rx="2" ry="2" />
+<text  x="482.92" y="367.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runLocalGetOp (70 samples, 8.79%)</title><rect x="763.1" y="373" width="103.7" height="15.0" fill="rgb(252,38,34)" rx="2" ry="2" />
+<text  x="766.07" y="383.5" >WasmEdge::Ex..</text>
+</g>
+<g >
+<title>cxx20::expected&lt;void, WasmEdge::ErrCode&gt;::expected (1 samples, 0.13%)</title><rect x="957.3" y="357" width="1.4" height="15.0" fill="rgb(215,39,41)" rx="2" ry="2" />
+<text  x="960.26" y="367.5" ></text>
+</g>
+<g >
+<title>std::__detail::__variant::_Move_ctor_base&lt;false, WasmEdge::Runtime::Instance::FunctionInstance::WasmFunction, WasmEdge::Symbol&lt;void&gt;, std::unique_ptr&lt;WasmEdge::Runtime::HostFunctionBase, std::default_delete&lt;WasmEdge::Runtime::HostFunctionBase&gt; &gt; &gt;::~_Move_ctor_base (2 samples, 0.25%)</title><rect x="1184.1" y="389" width="2.9" height="15.0" fill="rgb(215,166,21)" rx="2" ry="2" />
+<text  x="1187.07" y="399.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_view_base&lt;void, WasmEdge::ErrCode&gt;::expected_view_base (1 samples, 0.13%)</title><rect x="970.6" y="261" width="1.5" height="15.0" fill="rgb(222,36,46)" rx="2" ry="2" />
+<text  x="973.60" y="271.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_assign_base (2 samples, 0.25%)</title><rect x="755.7" y="325" width="2.9" height="15.0" fill="rgb(254,2,51)" rx="2" ry="2" />
+<text  x="758.65" y="335.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VM::VM::unsafeRunWasmFile (776 samples, 97.49%)</title><rect x="32.2" y="469" width="1150.4" height="15.0" fill="rgb(216,55,40)" rx="2" ry="2" />
+<text  x="35.24" y="479.5" >WasmEdge::VM::VM::unsafeRunWasmFile</text>
+</g>
+<g >
+<title>mmput (2 samples, 0.25%)</title><rect x="1187.0" y="629" width="3.0" height="15.0" fill="rgb(217,88,42)" rx="2" ry="2" />
+<text  x="1190.04" y="639.5" ></text>
+</g>
+<g >
+<title>std::__uninitialized_copy&lt;false&gt;::__uninit_copy&lt;WasmEdge::AST::Instruction const*, WasmEdge::AST::Instruction*&gt; (1 samples, 0.13%)</title><rect x="30.8" y="229" width="1.4" height="15.0" fill="rgb(243,93,11)" rx="2" ry="2" />
+<text  x="33.75" y="239.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Loader::Loader::loadSegment (13 samples, 1.63%)</title><rect x="13.0" y="357" width="19.2" height="15.0" fill="rgb(213,91,3)" rx="2" ry="2" />
+<text  x="15.96" y="367.5" ></text>
+</g>
+<g >
+<title>finish_task_switch (1 samples, 0.13%)</title><rect x="1182.6" y="389" width="1.5" height="15.0" fill="rgb(252,43,25)" rx="2" ry="2" />
+<text  x="1185.59" y="399.5" ></text>
+</g>
+<g >
+<title>do_futex (1 samples, 0.13%)</title><rect x="1182.6" y="469" width="1.5" height="15.0" fill="rgb(217,126,18)" rx="2" ry="2" />
+<text  x="1185.59" y="479.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_operations_base&lt;void, WasmEdge::ErrCode&gt;::expected_operations_base (1 samples, 0.13%)</title><rect x="958.7" y="277" width="1.5" height="15.0" fill="rgb(237,223,48)" rx="2" ry="2" />
+<text  x="961.74" y="287.5" ></text>
+</g>
+<g >
+<title>_start (3 samples, 0.38%)</title><rect x="1182.6" y="709" width="4.4" height="15.0" fill="rgb(211,15,35)" rx="2" ry="2" />
+<text  x="1185.59" y="719.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_view_base&lt;void, WasmEdge::ErrCode&gt;::expected_view_base (1 samples, 0.13%)</title><rect x="958.7" y="261" width="1.5" height="15.0" fill="rgb(210,208,23)" rx="2" ry="2" />
+<text  x="961.74" y="271.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_assign_base (6 samples, 0.75%)</title><rect x="961.7" y="325" width="8.9" height="15.0" fill="rgb(218,212,13)" rx="2" ry="2" />
+<text  x="964.71" y="335.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_operations_base&lt;void, WasmEdge::ErrCode&gt;::expected_operations_base (8 samples, 1.01%)</title><rect x="740.8" y="277" width="11.9" height="15.0" fill="rgb(213,223,7)" rx="2" ry="2" />
+<text  x="743.83" y="287.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VariadicUnion&lt;unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (12 samples, 1.51%)</title><rect x="629.6" y="293" width="17.8" height="15.0" fill="rgb(242,192,21)" rx="2" ry="2" />
+<text  x="632.65" y="303.5" ></text>
+</g>
+<g >
+<title>begin_new_exec (1 samples, 0.13%)</title><rect x="10.0" y="597" width="1.5" height="15.0" fill="rgb(205,14,18)" rx="2" ry="2" />
+<text  x="13.00" y="607.5" ></text>
+</g>
+<g >
+<title>std::__basic_future&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (1 samples, 0.13%)</title><rect x="1182.6" y="629" width="1.5" height="15.0" fill="rgb(250,22,12)" rx="2" ry="2" />
+<text  x="1185.59" y="639.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (2 samples, 0.25%)</title><rect x="988.4" y="357" width="3.0" height="15.0" fill="rgb(231,157,51)" rx="2" ry="2" />
+<text  x="991.39" y="367.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::pop (7 samples, 0.88%)</title><rect x="896.5" y="357" width="10.4" height="15.0" fill="rgb(214,176,11)" rx="2" ry="2" />
+<text  x="899.48" y="367.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runBrOp (8 samples, 1.01%)</title><rect x="435.5" y="341" width="11.8" height="15.0" fill="rgb(253,36,5)" rx="2" ry="2" />
+<text  x="438.45" y="351.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::invoke (771 samples, 96.86%)</title><rect x="32.2" y="437" width="1143.0" height="15.0" fill="rgb(206,51,21)" rx="2" ry="2" />
+<text  x="35.24" y="447.5" >WasmEdge::Executor::Executor::invoke</text>
+</g>
+<g >
+<title>all (796 samples, 100%)</title><rect x="10.0" y="741" width="1180.0" height="15.0" fill="rgb(249,66,20)" rx="2" ry="2" />
+<text  x="13.00" y="751.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::push&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (1 samples, 0.13%)</title><rect x="472.5" y="341" width="1.5" height="15.0" fill="rgb(225,4,4)" rx="2" ry="2" />
+<text  x="475.51" y="351.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_base (6 samples, 0.75%)</title><rect x="961.7" y="309" width="8.9" height="15.0" fill="rgb(253,158,40)" rx="2" ry="2" />
+<text  x="964.71" y="319.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::push&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (6 samples, 0.75%)</title><rect x="542.2" y="357" width="8.9" height="15.0" fill="rgb(214,112,3)" rx="2" ry="2" />
+<text  x="545.19" y="367.5" ></text>
+</g>
+<g >
+<title>std::__atomic_futex_unsigned&lt;2147483648u&gt;::_M_load_when_equal (1 samples, 0.13%)</title><rect x="1182.6" y="597" width="1.5" height="15.0" fill="rgb(228,110,15)" rx="2" ry="2" />
+<text  x="1185.59" y="607.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VariadicUnion&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (2 samples, 0.25%)</title><rect x="614.8" y="341" width="3.0" height="15.0" fill="rgb(223,138,40)" rx="2" ry="2" />
+<text  x="617.82" y="351.5" ></text>
+</g>
+<g >
+<title>irqentry_exit_to_user_mode (1 samples, 0.13%)</title><rect x="24.8" y="261" width="1.5" height="15.0" fill="rgb(235,63,39)" rx="2" ry="2" />
+<text  x="27.82" y="271.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (2 samples, 0.25%)</title><rect x="988.4" y="325" width="3.0" height="15.0" fill="rgb(242,122,7)" rx="2" ry="2" />
+<text  x="991.39" y="335.5" ></text>
+</g>
+<g >
+<title>irqentry_exit (1 samples, 0.13%)</title><rect x="24.8" y="277" width="1.5" height="15.0" fill="rgb(219,167,6)" rx="2" ry="2" />
+<text  x="27.82" y="287.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_storage_base&lt;void, WasmEdge::ErrCode, false, true&gt;::expected_storage_base (15 samples, 1.88%)</title><rect x="690.4" y="245" width="22.3" height="15.0" fill="rgb(206,152,33)" rx="2" ry="2" />
+<text  x="693.43" y="255.5" >c..</text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::pop (8 samples, 1.01%)</title><rect x="574.8" y="357" width="11.9" height="15.0" fill="rgb(216,115,2)" rx="2" ry="2" />
+<text  x="577.80" y="367.5" ></text>
+</g>
+<g >
+<title>cxx20::expected&lt;void, WasmEdge::ErrCode&gt;::expected (2 samples, 0.25%)</title><rect x="755.7" y="357" width="2.9" height="15.0" fill="rgb(223,38,34)" rx="2" ry="2" />
+<text  x="758.65" y="367.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_assign_base (15 samples, 1.88%)</title><rect x="690.4" y="341" width="22.3" height="15.0" fill="rgb(249,110,26)" rx="2" ry="2" />
+<text  x="693.43" y="351.5" >c..</text>
+</g>
+<g >
+<title>WasmEdge::Loader::Loader::loadSection (13 samples, 1.63%)</title><rect x="13.0" y="437" width="19.2" height="15.0" fill="rgb(234,154,52)" rx="2" ry="2" />
+<text  x="15.96" y="447.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (1 samples, 0.13%)</title><rect x="776.4" y="341" width="1.5" height="15.0" fill="rgb(241,64,37)" rx="2" ry="2" />
+<text  x="779.41" y="351.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_assign_base (1 samples, 0.13%)</title><rect x="958.7" y="341" width="1.5" height="15.0" fill="rgb(228,71,47)" rx="2" ry="2" />
+<text  x="961.74" y="351.5" ></text>
+</g>
+<g >
+<title>std::__detail::__variant::_Variant_storage&lt;false, WasmEdge::Runtime::Instance::FunctionInstance::WasmFunction, WasmEdge::Symbol&lt;void&gt;, std::unique_ptr&lt;WasmEdge::Runtime::HostFunctionBase, std::default_delete&lt;WasmEdge::Runtime::HostFunctionBase&gt; &gt; &gt;::_M_reset (2 samples, 0.25%)</title><rect x="1184.1" y="341" width="2.9" height="15.0" fill="rgb(242,54,42)" rx="2" ry="2" />
+<text  x="1187.07" y="351.5" ></text>
+</g>
+<g >
+<title>cxx20::expected&lt;void, WasmEdge::ErrCode&gt;::expected (6 samples, 0.75%)</title><rect x="961.7" y="357" width="8.9" height="15.0" fill="rgb(243,113,20)" rx="2" ry="2" />
+<text  x="964.71" y="367.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_view_base&lt;void, WasmEdge::ErrCode&gt;::expected_view_base (1 samples, 0.13%)</title><rect x="752.7" y="261" width="1.5" height="15.0" fill="rgb(212,219,2)" rx="2" ry="2" />
+<text  x="755.69" y="271.5" ></text>
+</g>
+<g >
+<title>operator (368 samples, 46.23%)</title><rect x="629.6" y="389" width="545.6" height="15.0" fill="rgb(240,12,52)" rx="2" ry="2" />
+<text  x="632.65" y="399.5" >operator</text>
+</g>
+<g >
+<title>WasmEdge::FileMgr::readS32 (2 samples, 0.25%)</title><rect x="20.4" y="293" width="2.9" height="15.0" fill="rgb(230,90,52)" rx="2" ry="2" />
+<text  x="23.38" y="303.5" ></text>
+</g>
+<g >
+<title>cxx20::expected&lt;void, WasmEdge::ErrCode&gt;::expected (1 samples, 0.13%)</title><rect x="958.7" y="357" width="1.5" height="15.0" fill="rgb(248,174,13)" rx="2" ry="2" />
+<text  x="961.74" y="367.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_assign_base (1 samples, 0.13%)</title><rect x="958.7" y="325" width="1.5" height="15.0" fill="rgb(208,92,19)" rx="2" ry="2" />
+<text  x="961.74" y="335.5" ></text>
+</g>
+<g >
+<title>perf_pin_task_context (1 samples, 0.13%)</title><rect x="10.0" y="565" width="1.5" height="15.0" fill="rgb(240,131,30)" rx="2" ry="2" />
+<text  x="13.00" y="575.5" ></text>
+</g>
+<g >
+<title>std::__detail::__variant::_Copy_ctor_base&lt;false, WasmEdge::Runtime::Instance::FunctionInstance::WasmFunction, WasmEdge::Symbol&lt;void&gt;, std::unique_ptr&lt;WasmEdge::Runtime::HostFunctionBase, std::default_delete&lt;WasmEdge::Runtime::HostFunctionBase&gt; &gt; &gt;::~_Copy_ctor_base (2 samples, 0.25%)</title><rect x="1184.1" y="373" width="2.9" height="15.0" fill="rgb(207,210,33)" rx="2" ry="2" />
+<text  x="1187.07" y="383.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::getTopN (1 samples, 0.13%)</title><rect x="895.0" y="357" width="1.5" height="15.0" fill="rgb(219,94,34)" rx="2" ry="2" />
+<text  x="898.00" y="367.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_base (2 samples, 0.25%)</title><rect x="985.4" y="309" width="3.0" height="15.0" fill="rgb(230,169,43)" rx="2" ry="2" />
+<text  x="988.43" y="319.5" ></text>
+</g>
+<g >
+<title>load_elf_binary (1 samples, 0.13%)</title><rect x="10.0" y="613" width="1.5" height="15.0" fill="rgb(215,25,38)" rx="2" ry="2" />
+<text  x="13.00" y="623.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_operations_base&lt;void, WasmEdge::ErrCode&gt;::expected_operations_base (2 samples, 0.25%)</title><rect x="723.0" y="277" width="3.0" height="15.0" fill="rgb(230,15,30)" rx="2" ry="2" />
+<text  x="726.04" y="287.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::Instance::ModuleInstance::unsafeGetGlobal (2 samples, 0.25%)</title><rect x="551.1" y="341" width="2.9" height="15.0" fill="rgb(243,166,47)" rx="2" ry="2" />
+<text  x="554.08" y="351.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runGtOp&lt;int&gt; (3 samples, 0.38%)</title><rect x="754.2" y="373" width="4.4" height="15.0" fill="rgb(230,174,28)" rx="2" ry="2" />
+<text  x="757.17" y="383.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::Instance::MemoryInstance::loadValue&lt;unsigned int, 2u&gt; (1 samples, 0.13%)</title><rect x="586.7" y="357" width="1.4" height="15.0" fill="rgb(229,140,18)" rx="2" ry="2" />
+<text  x="589.66" y="367.5" ></text>
+</g>
+<g >
+<title>futex_wait_queue_me (1 samples, 0.13%)</title><rect x="1182.6" y="437" width="1.5" height="15.0" fill="rgb(244,57,26)" rx="2" ry="2" />
+<text  x="1185.59" y="447.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_assign_base (9 samples, 1.13%)</title><rect x="972.1" y="341" width="13.3" height="15.0" fill="rgb(214,38,50)" rx="2" ry="2" />
+<text  x="975.09" y="351.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_base (15 samples, 1.88%)</title><rect x="690.4" y="309" width="22.3" height="15.0" fill="rgb(250,173,7)" rx="2" ry="2" />
+<text  x="693.43" y="319.5" >c..</text>
+</g>
+<g >
+<title>__GI___clone (790 samples, 99.25%)</title><rect x="11.5" y="709" width="1171.1" height="15.0" fill="rgb(209,167,7)" rx="2" ry="2" />
+<text  x="14.48" y="719.5" >__GI___clone</text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runAddOp&lt;unsigned int&gt; (29 samples, 3.64%)</title><rect x="647.4" y="373" width="43.0" height="15.0" fill="rgb(234,64,29)" rx="2" ry="2" />
+<text  x="650.44" y="383.5" >Wasm..</text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_base (9 samples, 1.13%)</title><rect x="972.1" y="293" width="13.3" height="15.0" fill="rgb(210,96,27)" rx="2" ry="2" />
+<text  x="975.09" y="303.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::getTopN (10 samples, 1.26%)</title><rect x="763.1" y="357" width="14.8" height="15.0" fill="rgb(226,157,43)" rx="2" ry="2" />
+<text  x="766.07" y="367.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Loader::Loader::loadInstruction (1 samples, 0.13%)</title><rect x="23.3" y="293" width="1.5" height="15.0" fill="rgb(240,151,25)" rx="2" ry="2" />
+<text  x="26.34" y="303.5" ></text>
+</g>
+<g >
+<title>std::allocator_traits&lt;std::allocator&lt;WasmEdge::AST::Instruction&gt; &gt;::deallocate (1 samples, 0.13%)</title><rect x="1184.1" y="117" width="1.5" height="15.0" fill="rgb(254,212,1)" rx="2" ry="2" />
+<text  x="1187.07" y="127.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Validator::FormChecker::StackTrans (2 samples, 0.25%)</title><rect x="1176.7" y="341" width="2.9" height="15.0" fill="rgb(246,15,4)" rx="2" ry="2" />
+<text  x="1179.66" y="351.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (8 samples, 1.01%)</title><rect x="574.8" y="341" width="11.9" height="15.0" fill="rgb(230,133,52)" rx="2" ry="2" />
+<text  x="577.80" y="351.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_base (1 samples, 0.13%)</title><rect x="970.6" y="293" width="1.5" height="15.0" fill="rgb(212,108,42)" rx="2" ry="2" />
+<text  x="973.60" y="303.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_base (9 samples, 1.13%)</title><rect x="972.1" y="309" width="13.3" height="15.0" fill="rgb(236,75,42)" rx="2" ry="2" />
+<text  x="975.09" y="319.5" ></text>
+</g>
+<g >
+<title>__mod_lruvec_page_state (1 samples, 0.13%)</title><rect x="1187.0" y="517" width="1.5" height="15.0" fill="rgb(236,76,12)" rx="2" ry="2" />
+<text  x="1190.04" y="527.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_base (1 samples, 0.13%)</title><rect x="957.3" y="293" width="1.4" height="15.0" fill="rgb(213,66,15)" rx="2" ry="2" />
+<text  x="960.26" y="303.5" ></text>
+</g>
+<g >
+<title>cxx20::expected&lt;void, WasmEdge::ErrCode&gt;::expected (1 samples, 0.13%)</title><rect x="752.7" y="357" width="1.5" height="15.0" fill="rgb(209,204,39)" rx="2" ry="2" />
+<text  x="755.69" y="367.5" ></text>
+</g>
+<g >
+<title>std::allocator_traits&lt;std::allocator&lt;WasmEdge::AST::Instruction&gt; &gt;::allocate (2 samples, 0.25%)</title><rect x="26.3" y="261" width="3.0" height="15.0" fill="rgb(230,66,11)" rx="2" ry="2" />
+<text  x="29.31" y="271.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VariadicUnion&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (1 samples, 0.13%)</title><rect x="960.2" y="341" width="1.5" height="15.0" fill="rgb(237,210,52)" rx="2" ry="2" />
+<text  x="963.23" y="351.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;WasmEdge::Runtime::Instance::ModuleInstance, std::default_delete&lt;WasmEdge::Runtime::Instance::ModuleInstance&gt; &gt;::~unique_ptr (2 samples, 0.25%)</title><rect x="1184.1" y="645" width="2.9" height="15.0" fill="rgb(210,4,32)" rx="2" ry="2" />
+<text  x="1187.07" y="655.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_storage_base&lt;void, WasmEdge::ErrCode, false, true&gt;::expected_storage_base (1 samples, 0.13%)</title><rect x="752.7" y="245" width="1.5" height="15.0" fill="rgb(221,151,32)" rx="2" ry="2" />
+<text  x="755.69" y="255.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Loader::Loader::parseModule (13 samples, 1.63%)</title><rect x="13.0" y="469" width="19.2" height="15.0" fill="rgb(229,9,54)" rx="2" ry="2" />
+<text  x="15.96" y="479.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runBrTableOp (1 samples, 0.13%)</title><rect x="468.1" y="373" width="1.4" height="15.0" fill="rgb(240,114,30)" rx="2" ry="2" />
+<text  x="471.07" y="383.5" ></text>
+</g>
+<g >
+<title>std::__detail::__variant::_Copy_assign_base&lt;false, WasmEdge::Runtime::Instance::FunctionInstance::WasmFunction, WasmEdge::Symbol&lt;void&gt;, std::unique_ptr&lt;WasmEdge::Runtime::HostFunctionBase, std::default_delete&lt;WasmEdge::Runtime::HostFunctionBase&gt; &gt; &gt;::~_Copy_assign_base (2 samples, 0.25%)</title><rect x="1184.1" y="405" width="2.9" height="15.0" fill="rgb(248,109,35)" rx="2" ry="2" />
+<text  x="1187.07" y="415.5" ></text>
+</g>
+<g >
+<title>sysvec_reschedule_ipi (1 samples, 0.13%)</title><rect x="24.8" y="293" width="1.5" height="15.0" fill="rgb(211,197,22)" rx="2" ry="2" />
+<text  x="27.82" y="303.5" ></text>
+</g>
+<g >
+<title>std::_Vector_base&lt;WasmEdge::AST::Instruction, std::allocator&lt;WasmEdge::AST::Instruction&gt; &gt;::_M_allocate (2 samples, 0.25%)</title><rect x="26.3" y="277" width="3.0" height="15.0" fill="rgb(232,52,14)" rx="2" ry="2" />
+<text  x="29.31" y="287.5" ></text>
+</g>
+<g >
+<title>std::_Vector_base&lt;std::pair&lt;unsigned int, WasmEdge::ValType&gt;, std::allocator&lt;std::pair&lt;unsigned int, WasmEdge::ValType&gt; &gt; &gt;::~_Vector_base (1 samples, 0.13%)</title><rect x="1185.6" y="149" width="1.4" height="15.0" fill="rgb(205,196,48)" rx="2" ry="2" />
+<text  x="1188.55" y="159.5" ></text>
+</g>
+<g >
+<title>std::_Destroy&lt;std::unique_ptr&lt;WasmEdge::Runtime::Instance::FunctionInstance, std::default_delete&lt;WasmEdge::Runtime::Instance::FunctionInstance&gt; &gt;*&gt; (2 samples, 0.25%)</title><rect x="1184.1" y="549" width="2.9" height="15.0" fill="rgb(229,206,14)" rx="2" ry="2" />
+<text  x="1187.07" y="559.5" ></text>
+</g>
+<g >
+<title>unmap_single_vma (2 samples, 0.25%)</title><rect x="1187.0" y="581" width="3.0" height="15.0" fill="rgb(217,13,29)" rx="2" ry="2" />
+<text  x="1190.04" y="591.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::Instance::ModuleInstance::unsafeGetGlobal (37 samples, 4.65%)</title><rect x="487.3" y="341" width="54.9" height="15.0" fill="rgb(212,145,25)" rx="2" ry="2" />
+<text  x="490.34" y="351.5" >WasmE..</text>
+</g>
+<g >
+<title>do_anonymous_page (1 samples, 0.13%)</title><rect x="27.8" y="85" width="1.5" height="15.0" fill="rgb(220,100,0)" rx="2" ry="2" />
+<text  x="30.79" y="95.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runAndOp&lt;unsigned int&gt; (15 samples, 1.88%)</title><rect x="690.4" y="373" width="22.3" height="15.0" fill="rgb(217,161,11)" rx="2" ry="2" />
+<text  x="693.43" y="383.5" >W..</text>
+</g>
+<g >
+<title>cxx20::detail::expected_operations_base&lt;void, WasmEdge::ErrCode&gt;::expected_operations_base (6 samples, 0.75%)</title><rect x="961.7" y="277" width="8.9" height="15.0" fill="rgb(235,54,53)" rx="2" ry="2" />
+<text  x="964.71" y="287.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VariadicUnion&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (3 samples, 0.38%)</title><rect x="736.4" y="341" width="4.4" height="15.0" fill="rgb(247,158,25)" rx="2" ry="2" />
+<text  x="739.38" y="351.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (3 samples, 0.38%)</title><rect x="902.4" y="325" width="4.5" height="15.0" fill="rgb(210,147,12)" rx="2" ry="2" />
+<text  x="905.41" y="335.5" ></text>
+</g>
+<g >
+<title>std::__invoke_impl&lt;void, WasmEdge::VM::Async&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (789 samples, 99.12%)</title><rect x="13.0" y="597" width="1169.6" height="15.0" fill="rgb(208,26,18)" rx="2" ry="2" />
+<text  x="15.96" y="607.5" >std::__invoke_impl&lt;void, WasmEdge::VM::Async&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigne..</text>
+</g>
+<g >
+<title>WasmEdge::VM::VM::unsafeRunWasmFile (789 samples, 99.12%)</title><rect x="13.0" y="485" width="1169.6" height="15.0" fill="rgb(231,175,20)" rx="2" ry="2" />
+<text  x="15.96" y="495.5" >WasmEdge::VM::VM::unsafeRunWasmFile</text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (2 samples, 0.25%)</title><rect x="988.4" y="341" width="3.0" height="15.0" fill="rgb(229,23,30)" rx="2" ry="2" />
+<text  x="991.39" y="351.5" ></text>
+</g>
+<g >
+<title>cxx20::expected&lt;void, WasmEdge::ErrCode&gt;::expected (2 samples, 0.25%)</title><rect x="985.4" y="357" width="3.0" height="15.0" fill="rgb(249,81,24)" rx="2" ry="2" />
+<text  x="988.43" y="367.5" ></text>
+</g>
+<g >
+<title>_int_malloc (1 samples, 0.13%)</title><rect x="30.8" y="149" width="1.4" height="15.0" fill="rgb(232,54,33)" rx="2" ry="2" />
+<text  x="33.75" y="159.5" ></text>
+</g>
+<g >
+<title>__mod_memcg_lruvec_state (1 samples, 0.13%)</title><rect x="1187.0" y="485" width="1.5" height="15.0" fill="rgb(219,13,31)" rx="2" ry="2" />
+<text  x="1190.04" y="495.5" ></text>
+</g>
+<g >
+<title>std::__atomic_futex_unsigned&lt;2147483648u&gt;::_M_load_and_test (1 samples, 0.13%)</title><rect x="1182.6" y="581" width="1.5" height="15.0" fill="rgb(250,71,20)" rx="2" ry="2" />
+<text  x="1185.59" y="591.5" ></text>
+</g>
+<g >
+<title>__perf_event_task_sched_in (1 samples, 0.13%)</title><rect x="1182.6" y="373" width="1.5" height="15.0" fill="rgb(249,142,9)" rx="2" ry="2" />
+<text  x="1185.59" y="383.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_base (29 samples, 3.64%)</title><rect x="647.4" y="309" width="43.0" height="15.0" fill="rgb(223,109,0)" rx="2" ry="2" />
+<text  x="650.44" y="319.5" >cxx2..</text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runCallIndirectOp (3 samples, 0.38%)</title><rect x="469.5" y="373" width="4.5" height="15.0" fill="rgb(239,127,41)" rx="2" ry="2" />
+<text  x="472.55" y="383.5" ></text>
+</g>
+<g >
+<title>operator (13 samples, 1.63%)</title><rect x="13.0" y="373" width="19.2" height="15.0" fill="rgb(239,78,44)" rx="2" ry="2" />
+<text  x="15.96" y="383.5" ></text>
+</g>
+<g >
+<title>try_charge (1 samples, 0.13%)</title><rect x="27.8" y="37" width="1.5" height="15.0" fill="rgb(233,47,14)" rx="2" ry="2" />
+<text  x="30.79" y="47.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_assign_base (29 samples, 3.64%)</title><rect x="647.4" y="341" width="43.0" height="15.0" fill="rgb(237,197,26)" rx="2" ry="2" />
+<text  x="650.44" y="351.5" >cxx2..</text>
+</g>
+<g >
+<title>cxx20::expected&lt;void, WasmEdge::ErrCode&gt;::expected (1 samples, 0.13%)</title><rect x="970.6" y="357" width="1.5" height="15.0" fill="rgb(247,219,29)" rx="2" ry="2" />
+<text  x="973.60" y="367.5" ></text>
+</g>
+<g >
+<title>std::__shared_mutex_pthread::lock_shared (4 samples, 0.50%)</title><rect x="479.9" y="309" width="6.0" height="15.0" fill="rgb(237,120,36)" rx="2" ry="2" />
+<text  x="482.92" y="319.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runLtOp&lt;int&gt; (2 samples, 0.25%)</title><rect x="955.8" y="373" width="2.9" height="15.0" fill="rgb(243,144,8)" rx="2" ry="2" />
+<text  x="958.78" y="383.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VariadicUnion&lt;unsigned __int128, __int128, unsigned long __vector (12 samples, 1.51%)</title><rect x="629.6" y="229" width="17.8" height="15.0" fill="rgb(252,122,31)" rx="2" ry="2" />
+<text  x="632.65" y="239.5" ></text>
+</g>
+<g >
+<title>std::__detail::__variant::_Variant_storage&lt;false, WasmEdge::Runtime::Instance::FunctionInstance::WasmFunction, WasmEdge::Symbol&lt;void&gt;, std::unique_ptr&lt;WasmEdge::Runtime::HostFunctionBase, std::default_delete&lt;WasmEdge::Runtime::HostFunctionBase&gt; &gt; &gt;::_M_reset_impl (2 samples, 0.25%)</title><rect x="1184.1" y="325" width="2.9" height="15.0" fill="rgb(253,164,50)" rx="2" ry="2" />
+<text  x="1187.07" y="335.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::Instance::MemoryInstance::loadValue&lt;unsigned int, 4u&gt; (12 samples, 1.51%)</title><rect x="597.0" y="357" width="17.8" height="15.0" fill="rgb(246,152,31)" rx="2" ry="2" />
+<text  x="600.04" y="367.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Validator::Validator::validate (5 samples, 0.63%)</title><rect x="1175.2" y="437" width="7.4" height="15.0" fill="rgb(225,225,6)" rx="2" ry="2" />
+<text  x="1178.18" y="447.5" ></text>
+</g>
+<g >
+<title>__perf_event_task_sched_in (1 samples, 0.13%)</title><rect x="11.5" y="645" width="1.5" height="15.0" fill="rgb(222,48,24)" rx="2" ry="2" />
+<text  x="14.48" y="655.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_base (2 samples, 0.25%)</title><rect x="985.4" y="293" width="3.0" height="15.0" fill="rgb(253,32,50)" rx="2" ry="2" />
+<text  x="988.43" y="303.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_assign_base (8 samples, 1.01%)</title><rect x="740.8" y="341" width="11.9" height="15.0" fill="rgb(227,20,35)" rx="2" ry="2" />
+<text  x="743.83" y="351.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (3 samples, 0.38%)</title><rect x="758.6" y="357" width="4.5" height="15.0" fill="rgb(210,18,41)" rx="2" ry="2" />
+<text  x="761.62" y="367.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::getTop (2 samples, 0.25%)</title><rect x="988.4" y="373" width="3.0" height="15.0" fill="rgb(212,46,47)" rx="2" ry="2" />
+<text  x="991.39" y="383.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::AST::Instruction, std::allocator&lt;WasmEdge::AST::Instruction&gt; &gt;::~vector (1 samples, 0.13%)</title><rect x="1184.1" y="165" width="1.5" height="15.0" fill="rgb(226,41,49)" rx="2" ry="2" />
+<text  x="1187.07" y="175.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::Instance::FunctionInstance::~FunctionInstance (2 samples, 0.25%)</title><rect x="1184.1" y="469" width="2.9" height="15.0" fill="rgb(227,92,41)" rx="2" ry="2" />
+<text  x="1187.07" y="479.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Validator::FormChecker::checkInstr (5 samples, 0.63%)</title><rect x="1175.2" y="357" width="7.4" height="15.0" fill="rgb(225,22,33)" rx="2" ry="2" />
+<text  x="1178.18" y="367.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::Instance::ModuleInstance::~ModuleInstance (2 samples, 0.25%)</title><rect x="1184.1" y="597" width="2.9" height="15.0" fill="rgb(232,23,54)" rx="2" ry="2" />
+<text  x="1187.07" y="607.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_assign_base (1 samples, 0.13%)</title><rect x="970.6" y="325" width="1.5" height="15.0" fill="rgb(217,171,52)" rx="2" ry="2" />
+<text  x="973.60" y="335.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VM::VM::~VM (2 samples, 0.25%)</title><rect x="1184.1" y="661" width="2.9" height="15.0" fill="rgb(253,96,22)" rx="2" ry="2" />
+<text  x="1187.07" y="671.5" ></text>
+</g>
+<g >
+<title>std::shared_lock&lt;std::shared_mutex&gt;::shared_lock (4 samples, 0.50%)</title><rect x="479.9" y="341" width="6.0" height="15.0" fill="rgb(248,110,36)" rx="2" ry="2" />
+<text  x="482.92" y="351.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Validator::FormChecker::validate (5 samples, 0.63%)</title><rect x="1175.2" y="405" width="7.4" height="15.0" fill="rgb(241,129,18)" rx="2" ry="2" />
+<text  x="1178.18" y="415.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_storage_base&lt;void, WasmEdge::ErrCode, false, true&gt;::expected_storage_base (1 samples, 0.13%)</title><rect x="957.3" y="245" width="1.4" height="15.0" fill="rgb(241,34,47)" rx="2" ry="2" />
+<text  x="960.26" y="255.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_operations_base&lt;void, WasmEdge::ErrCode&gt;::expected_operations_base (7 samples, 0.88%)</title><rect x="1164.8" y="293" width="10.4" height="15.0" fill="rgb(214,82,38)" rx="2" ry="2" />
+<text  x="1167.80" y="303.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runShlOp&lt;unsigned int&gt; (6 samples, 0.75%)</title><rect x="961.7" y="373" width="8.9" height="15.0" fill="rgb(239,155,7)" rx="2" ry="2" />
+<text  x="964.71" y="383.5" ></text>
+</g>
+<g >
+<title>operator new (1 samples, 0.13%)</title><rect x="30.8" y="181" width="1.4" height="15.0" fill="rgb(233,112,37)" rx="2" ry="2" />
+<text  x="33.75" y="191.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_storage_base&lt;void, WasmEdge::ErrCode, false, true&gt;::expected_storage_base (1 samples, 0.13%)</title><rect x="958.7" y="245" width="1.5" height="15.0" fill="rgb(206,225,15)" rx="2" ry="2" />
+<text  x="961.74" y="255.5" ></text>
+</g>
+<g >
+<title>_int_malloc (2 samples, 0.25%)</title><rect x="26.3" y="197" width="3.0" height="15.0" fill="rgb(224,13,20)" rx="2" ry="2" />
+<text  x="29.31" y="207.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_assign_base (1 samples, 0.13%)</title><rect x="957.3" y="325" width="1.4" height="15.0" fill="rgb(242,225,12)" rx="2" ry="2" />
+<text  x="960.26" y="335.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_assign_base (7 samples, 0.88%)</title><rect x="1164.8" y="341" width="10.4" height="15.0" fill="rgb(249,152,9)" rx="2" ry="2" />
+<text  x="1167.80" y="351.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runLoadOp&lt;unsigned int, 32u&gt; (20 samples, 2.51%)</title><rect x="588.1" y="373" width="29.7" height="15.0" fill="rgb(247,220,9)" rx="2" ry="2" />
+<text  x="591.14" y="383.5" >Wa..</text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runEqOp&lt;unsigned int&gt; (6 samples, 0.75%)</title><rect x="717.1" y="373" width="8.9" height="15.0" fill="rgb(223,221,53)" rx="2" ry="2" />
+<text  x="720.11" y="383.5" ></text>
+</g>
+<g >
+<title>free_unref_page_list (1 samples, 0.13%)</title><rect x="1188.5" y="485" width="1.5" height="15.0" fill="rgb(252,52,26)" rx="2" ry="2" />
+<text  x="1191.52" y="495.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VariadicUnion&lt;int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (12 samples, 1.51%)</title><rect x="629.6" y="309" width="17.8" height="15.0" fill="rgb(242,146,37)" rx="2" ry="2" />
+<text  x="632.65" y="319.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_operations_base&lt;void, WasmEdge::ErrCode&gt;::expected_operations_base (1 samples, 0.13%)</title><rect x="957.3" y="277" width="1.4" height="15.0" fill="rgb(229,80,33)" rx="2" ry="2" />
+<text  x="960.26" y="287.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Loader::Loader::loadInstrSeq (12 samples, 1.51%)</title><rect x="14.4" y="325" width="17.8" height="15.0" fill="rgb(250,130,41)" rx="2" ry="2" />
+<text  x="17.45" y="335.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_storage_base&lt;void, WasmEdge::ErrCode, false, true&gt;::expected_storage_base (2 samples, 0.25%)</title><rect x="985.4" y="245" width="3.0" height="15.0" fill="rgb(232,169,52)" rx="2" ry="2" />
+<text  x="988.43" y="255.5" ></text>
+</g>
+<g >
+<title>perf_lock_task_context (1 samples, 0.13%)</title><rect x="10.0" y="549" width="1.5" height="15.0" fill="rgb(244,165,29)" rx="2" ry="2" />
+<text  x="13.00" y="559.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (2 samples, 0.25%)</title><rect x="26.3" y="213" width="3.0" height="15.0" fill="rgb(215,218,1)" rx="2" ry="2" />
+<text  x="29.31" y="223.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VM::Async&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (789 samples, 99.12%)</title><rect x="13.0" y="581" width="1169.6" height="15.0" fill="rgb(208,204,20)" rx="2" ry="2" />
+<text  x="15.96" y="591.5" >WasmEdge::VM::Async&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, uns..</text>
+</g>
+<g >
+<title>loadSectionContent&lt;WasmEdge::AST::CodeSection, WasmEdge::Loader::Loader::loadSection (13 samples, 1.63%)</title><rect x="13.0" y="421" width="19.2" height="15.0" fill="rgb(209,89,35)" rx="2" ry="2" />
+<text  x="15.96" y="431.5" ></text>
+</g>
+<g >
+<title>std::__detail::__variant::_Variant_storage&lt;false, WasmEdge::Runtime::Instance::FunctionInstance::WasmFunction, WasmEdge::Symbol&lt;void&gt;, std::unique_ptr&lt;WasmEdge::Runtime::HostFunctionBase, std::default_delete&lt;WasmEdge::Runtime::HostFunctionBase&gt; &gt; &gt;::_M_reset_impl (2 samples, 0.25%)</title><rect x="1184.1" y="213" width="2.9" height="15.0" fill="rgb(225,104,46)" rx="2" ry="2" />
+<text  x="1187.07" y="223.5" ></text>
+</g>
+<g >
+<title>unlink_chunk.isra.0 (1 samples, 0.13%)</title><rect x="29.3" y="213" width="1.5" height="15.0" fill="rgb(218,119,18)" rx="2" ry="2" />
+<text  x="32.27" y="223.5" ></text>
+</g>
+<g >
+<title>std::__detail::__variant::__gen_vtable_impl&lt;true, std::__detail::__variant::_Multi_array&lt;std::__detail::__variant::__variant_cookie  (2 samples, 0.25%)</title><rect x="1184.1" y="293" width="2.9" height="15.0" fill="rgb(240,99,34)" rx="2" ry="2" />
+<text  x="1187.07" y="303.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_view_base&lt;void, WasmEdge::ErrCode&gt;::expected_view_base (1 samples, 0.13%)</title><rect x="957.3" y="261" width="1.4" height="15.0" fill="rgb(226,59,5)" rx="2" ry="2" />
+<text  x="960.26" y="271.5" ></text>
+</g>
+<g >
+<title>WasmEdge::FileMgr::readS32 (2 samples, 0.25%)</title><rect x="20.4" y="277" width="2.9" height="15.0" fill="rgb(205,141,17)" rx="2" ry="2" />
+<text  x="23.38" y="287.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_storage_base&lt;void, WasmEdge::ErrCode, false, true&gt;::expected_storage_base (29 samples, 3.64%)</title><rect x="647.4" y="245" width="43.0" height="15.0" fill="rgb(214,99,50)" rx="2" ry="2" />
+<text  x="650.44" y="255.5" >cxx2..</text>
+</g>
+<g >
+<title>__GI___libc_malloc (1 samples, 0.13%)</title><rect x="30.8" y="165" width="1.4" height="15.0" fill="rgb(215,44,22)" rx="2" ry="2" />
+<text  x="33.75" y="175.5" ></text>
+</g>
+<g >
+<title>std::__detail::__variant::_Variant_base&lt;WasmEdge::Runtime::Instance::FunctionInstance::WasmFunction, WasmEdge::Symbol&lt;void&gt;, std::unique_ptr&lt;WasmEdge::Runtime::HostFunctionBase, std::default_delete&lt;WasmEdge::Runtime::HostFunctionBase&gt; &gt; &gt;::~_Variant_base (2 samples, 0.25%)</title><rect x="1184.1" y="437" width="2.9" height="15.0" fill="rgb(229,57,28)" rx="2" ry="2" />
+<text  x="1187.07" y="447.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (9 samples, 1.13%)</title><rect x="1028.4" y="325" width="13.4" height="15.0" fill="rgb(207,157,53)" rx="2" ry="2" />
+<text  x="1031.42" y="335.5" ></text>
+</g>
+<g >
+<title>finish_task_switch (1 samples, 0.13%)</title><rect x="24.8" y="197" width="1.5" height="15.0" fill="rgb(249,217,18)" rx="2" ry="2" />
+<text  x="27.82" y="207.5" ></text>
+</g>
+<g >
+<title>__handle_mm_fault (1 samples, 0.13%)</title><rect x="27.8" y="101" width="1.5" height="15.0" fill="rgb(206,217,34)" rx="2" ry="2" />
+<text  x="30.79" y="111.5" ></text>
+</g>
+<g >
+<title>__x64_sys_exit_group (2 samples, 0.25%)</title><rect x="1187.0" y="677" width="3.0" height="15.0" fill="rgb(232,105,32)" rx="2" ry="2" />
+<text  x="1190.04" y="687.5" ></text>
+</g>
+<g >
+<title>std::__atomic_futex_unsigned&lt;2147483648u&gt;::_M_load_and_test_until (1 samples, 0.13%)</title><rect x="1182.6" y="565" width="1.5" height="15.0" fill="rgb(223,202,31)" rx="2" ry="2" />
+<text  x="1185.59" y="575.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::push&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (83 samples, 10.43%)</title><rect x="1041.8" y="373" width="123.0" height="15.0" fill="rgb(241,96,38)" rx="2" ry="2" />
+<text  x="1044.76" y="383.5" >WasmEdge::Runti..</text>
+</g>
+<g >
+<title>__gnu_cxx::new_allocator&lt;WasmEdge::AST::Instruction&gt;::allocate (2 samples, 0.25%)</title><rect x="26.3" y="245" width="3.0" height="15.0" fill="rgb(242,90,42)" rx="2" ry="2" />
+<text  x="29.31" y="255.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::popFrame (4 samples, 0.50%)</title><rect x="992.8" y="357" width="6.0" height="15.0" fill="rgb(245,15,19)" rx="2" ry="2" />
+<text  x="995.84" y="367.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_storage_base&lt;void, WasmEdge::ErrCode, false, true&gt;::expected_storage_base (8 samples, 1.01%)</title><rect x="740.8" y="245" width="11.9" height="15.0" fill="rgb(231,14,18)" rx="2" ry="2" />
+<text  x="743.83" y="255.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (1 samples, 0.13%)</title><rect x="554.0" y="309" width="1.5" height="15.0" fill="rgb(230,101,41)" rx="2" ry="2" />
+<text  x="557.05" y="319.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (9 samples, 1.13%)</title><rect x="1028.4" y="341" width="13.4" height="15.0" fill="rgb(227,221,45)" rx="2" ry="2" />
+<text  x="1031.42" y="351.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Validator::FormChecker::popType (1 samples, 0.13%)</title><rect x="1178.1" y="293" width="1.5" height="15.0" fill="rgb(247,147,27)" rx="2" ry="2" />
+<text  x="1181.14" y="303.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (1 samples, 0.13%)</title><rect x="472.5" y="325" width="1.5" height="15.0" fill="rgb(249,213,26)" rx="2" ry="2" />
+<text  x="475.51" y="335.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_storage_base&lt;void, WasmEdge::ErrCode, false, true&gt;::expected_storage_base (2 samples, 0.25%)</title><rect x="723.0" y="245" width="3.0" height="15.0" fill="rgb(208,203,16)" rx="2" ry="2" />
+<text  x="726.04" y="255.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (1 samples, 0.13%)</title><rect x="955.8" y="357" width="1.5" height="15.0" fill="rgb(211,170,16)" rx="2" ry="2" />
+<text  x="958.78" y="367.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::getGlobInstByIdx (37 samples, 4.65%)</title><rect x="487.3" y="357" width="54.9" height="15.0" fill="rgb(237,75,8)" rx="2" ry="2" />
+<text  x="490.34" y="367.5" >WasmE..</text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_base (6 samples, 0.75%)</title><rect x="961.7" y="293" width="8.9" height="15.0" fill="rgb(215,55,39)" rx="2" ry="2" />
+<text  x="964.71" y="303.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VariadicUnion&lt;double, unsigned __int128, __int128, unsigned long __vector (12 samples, 1.51%)</title><rect x="629.6" y="245" width="17.8" height="15.0" fill="rgb(242,7,49)" rx="2" ry="2" />
+<text  x="632.65" y="255.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VM::VM::runWasmFile (789 samples, 99.12%)</title><rect x="13.0" y="501" width="1169.6" height="15.0" fill="rgb(254,218,46)" rx="2" ry="2" />
+<text  x="15.96" y="511.5" >WasmEdge::VM::VM::runWasmFile</text>
+</g>
+<g >
+<title>std::shared_mutex::lock_shared (4 samples, 0.50%)</title><rect x="479.9" y="325" width="6.0" height="15.0" fill="rgb(250,66,35)" rx="2" ry="2" />
+<text  x="482.92" y="335.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (1 samples, 0.13%)</title><rect x="960.2" y="357" width="1.5" height="15.0" fill="rgb(232,121,26)" rx="2" ry="2" />
+<text  x="963.23" y="367.5" ></text>
+</g>
+<g >
+<title>std::__invoke&lt;std::__detail::__variant::_Variant_storage&lt;false, WasmEdge::Runtime::Instance::FunctionInstance::WasmFunction, WasmEdge::Symbol&lt;void&gt;, std::unique_ptr&lt;WasmEdge::Runtime::HostFunctionBase, std::default_delete&lt;WasmEdge::Runtime::HostFunctionBase&gt; &gt; &gt;::_M_reset_impl (2 samples, 0.25%)</title><rect x="1184.1" y="245" width="2.9" height="15.0" fill="rgb(223,142,11)" rx="2" ry="2" />
+<text  x="1187.07" y="255.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (7 samples, 0.88%)</title><rect x="896.5" y="341" width="10.4" height="15.0" fill="rgb(214,146,35)" rx="2" ry="2" />
+<text  x="899.48" y="351.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_view_base&lt;void, WasmEdge::ErrCode&gt;::expected_view_base (2 samples, 0.25%)</title><rect x="723.0" y="261" width="3.0" height="15.0" fill="rgb(207,137,29)" rx="2" ry="2" />
+<text  x="726.04" y="271.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (2 samples, 0.25%)</title><rect x="614.8" y="357" width="3.0" height="15.0" fill="rgb(247,105,52)" rx="2" ry="2" />
+<text  x="617.82" y="367.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_base (1 samples, 0.13%)</title><rect x="957.3" y="309" width="1.4" height="15.0" fill="rgb(238,51,9)" rx="2" ry="2" />
+<text  x="960.26" y="319.5" ></text>
+</g>
+<g >
+<title>do_group_exit (2 samples, 0.25%)</title><rect x="1187.0" y="661" width="3.0" height="15.0" fill="rgb(251,71,54)" rx="2" ry="2" />
+<text  x="1190.04" y="671.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_view_base&lt;void, WasmEdge::ErrCode&gt;::expected_view_base (29 samples, 3.64%)</title><rect x="647.4" y="261" width="43.0" height="15.0" fill="rgb(245,89,3)" rx="2" ry="2" />
+<text  x="650.44" y="271.5" >cxx2..</text>
+</g>
+<g >
+<title>ret_from_fork (1 samples, 0.13%)</title><rect x="11.5" y="693" width="1.5" height="15.0" fill="rgb(223,220,52)" rx="2" ry="2" />
+<text  x="14.48" y="703.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runCallOp (1 samples, 0.13%)</title><rect x="484.4" y="293" width="1.5" height="15.0" fill="rgb(246,92,48)" rx="2" ry="2" />
+<text  x="487.37" y="303.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runLtOp&lt;unsigned int&gt; (1 samples, 0.13%)</title><rect x="958.7" y="373" width="1.5" height="15.0" fill="rgb(217,114,15)" rx="2" ry="2" />
+<text  x="961.74" y="383.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runFunction (771 samples, 96.86%)</title><rect x="32.2" y="421" width="1143.0" height="15.0" fill="rgb(246,180,21)" rx="2" ry="2" />
+<text  x="35.24" y="431.5" >WasmEdge::Executor::Executor::runFunction</text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (3 samples, 0.38%)</title><rect x="902.4" y="309" width="4.5" height="15.0" fill="rgb(215,180,50)" rx="2" ry="2" />
+<text  x="905.41" y="319.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_assign_base (6 samples, 0.75%)</title><rect x="961.7" y="341" width="8.9" height="15.0" fill="rgb(239,147,24)" rx="2" ry="2" />
+<text  x="964.71" y="351.5" ></text>
+</g>
+<g >
+<title>WasmEdge::AST::Instruction::setJumpElse (1 samples, 0.13%)</title><rect x="15.9" y="309" width="1.5" height="15.0" fill="rgb(231,225,48)" rx="2" ry="2" />
+<text  x="18.93" y="319.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runBrIfOp (8 samples, 1.01%)</title><rect x="435.5" y="357" width="11.8" height="15.0" fill="rgb(231,182,45)" rx="2" ry="2" />
+<text  x="438.45" y="367.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runIfElseOp (21 samples, 2.64%)</title><rect x="555.5" y="373" width="31.2" height="15.0" fill="rgb(253,120,18)" rx="2" ry="2" />
+<text  x="558.53" y="383.5" >Wa..</text>
+</g>
+<g >
+<title>WasmEdge::Runtime::Instance::MemoryInstance::checkAccessBound (1 samples, 0.13%)</title><rect x="613.3" y="341" width="1.5" height="15.0" fill="rgb(251,73,25)" rx="2" ry="2" />
+<text  x="616.34" y="351.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (1 samples, 0.13%)</title><rect x="10.0" y="709" width="1.5" height="15.0" fill="rgb(213,85,26)" rx="2" ry="2" />
+<text  x="13.00" y="719.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Validator::Validator::validate (5 samples, 0.63%)</title><rect x="1175.2" y="421" width="7.4" height="15.0" fill="rgb(249,58,21)" rx="2" ry="2" />
+<text  x="1178.18" y="431.5" ></text>
+</g>
+<g >
+<title>cxx20::expected&lt;void, WasmEdge::ErrCode&gt;::expected (9 samples, 1.13%)</title><rect x="972.1" y="357" width="13.3" height="15.0" fill="rgb(237,185,50)" rx="2" ry="2" />
+<text  x="975.09" y="367.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_operations_base&lt;void, WasmEdge::ErrCode&gt;::expected_operations_base (2 samples, 0.25%)</title><rect x="755.7" y="277" width="2.9" height="15.0" fill="rgb(222,121,21)" rx="2" ry="2" />
+<text  x="758.65" y="287.5" ></text>
+</g>
+<g >
+<title>std::_Destroy_aux&lt;false&gt;::__destroy&lt;std::unique_ptr&lt;WasmEdge::Runtime::Instance::FunctionInstance, std::default_delete&lt;WasmEdge::Runtime::Instance::FunctionInstance&gt; &gt;*&gt; (2 samples, 0.25%)</title><rect x="1184.1" y="533" width="2.9" height="15.0" fill="rgb(234,6,50)" rx="2" ry="2" />
+<text  x="1187.07" y="543.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Validator::FormChecker::popTypes (1 samples, 0.13%)</title><rect x="1178.1" y="325" width="1.5" height="15.0" fill="rgb(252,7,19)" rx="2" ry="2" />
+<text  x="1181.14" y="335.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runLeOp&lt;unsigned int&gt; (3 samples, 0.38%)</title><rect x="758.6" y="373" width="4.5" height="15.0" fill="rgb(249,100,41)" rx="2" ry="2" />
+<text  x="761.62" y="383.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_base (15 samples, 1.88%)</title><rect x="690.4" y="293" width="22.3" height="15.0" fill="rgb(214,82,22)" rx="2" ry="2" />
+<text  x="693.43" y="303.5" >c..</text>
+</g>
+<g >
+<title>WasmEdge::AST::Instruction::getNum (12 samples, 1.51%)</title><rect x="629.6" y="373" width="17.8" height="15.0" fill="rgb(227,147,28)" rx="2" ry="2" />
+<text  x="632.65" y="383.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::Instance::ModuleInstance::unsafeGetMemory (50 samples, 6.28%)</title><rect x="325.8" y="357" width="74.1" height="15.0" fill="rgb(220,130,10)" rx="2" ry="2" />
+<text  x="328.75" y="367.5" >WasmEdge..</text>
+</g>
+<g >
+<title>operator new (1 samples, 0.13%)</title><rect x="18.9" y="277" width="1.5" height="15.0" fill="rgb(209,63,53)" rx="2" ry="2" />
+<text  x="21.89" y="287.5" ></text>
+</g>
+<g >
+<title>std::__detail::__variant::__gen_vtable_impl&lt;true, std::__detail::__variant::_Multi_array&lt;std::__detail::__variant::__variant_cookie  (2 samples, 0.25%)</title><rect x="1184.1" y="277" width="2.9" height="15.0" fill="rgb(206,229,4)" rx="2" ry="2" />
+<text  x="1187.07" y="287.5" ></text>
+</g>
+<g >
+<title>std::_Vector_base&lt;WasmEdge::AST::Instruction, std::allocator&lt;WasmEdge::AST::Instruction&gt; &gt;::_M_deallocate (1 samples, 0.13%)</title><rect x="29.3" y="277" width="1.5" height="15.0" fill="rgb(211,166,45)" rx="2" ry="2" />
+<text  x="32.27" y="287.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::push&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (60 samples, 7.54%)</title><rect x="777.9" y="357" width="88.9" height="15.0" fill="rgb(234,41,38)" rx="2" ry="2" />
+<text  x="780.89" y="367.5" >WasmEdge::..</text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (7 samples, 0.88%)</title><rect x="447.3" y="341" width="10.4" height="15.0" fill="rgb(238,57,29)" rx="2" ry="2" />
+<text  x="450.31" y="351.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::pop (7 samples, 0.88%)</title><rect x="447.3" y="357" width="10.4" height="15.0" fill="rgb(250,47,0)" rx="2" ry="2" />
+<text  x="450.31" y="367.5" ></text>
+</g>
+<g >
+<title>__libc_start_main (3 samples, 0.38%)</title><rect x="1182.6" y="693" width="4.4" height="15.0" fill="rgb(221,74,4)" rx="2" ry="2" />
+<text  x="1185.59" y="703.5" ></text>
+</g>
+<g >
+<title>std::thread::_State_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;WasmEdge::VM::Async&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (789 samples, 99.12%)</title><rect x="13.0" y="661" width="1169.6" height="15.0" fill="rgb(228,149,0)" rx="2" ry="2" />
+<text  x="15.96" y="671.5" >std::thread::_State_impl&lt;std::thread::_Invoker&lt;std::tuple&lt;WasmEdge::VM::Async&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned l..</text>
+</g>
+<g >
+<title>do_exit (2 samples, 0.25%)</title><rect x="1187.0" y="645" width="3.0" height="15.0" fill="rgb(235,101,10)" rx="2" ry="2" />
+<text  x="1190.04" y="655.5" ></text>
+</g>
+<g >
+<title>_int_free (1 samples, 0.13%)</title><rect x="29.3" y="229" width="1.5" height="15.0" fill="rgb(248,58,30)" rx="2" ry="2" />
+<text  x="32.27" y="239.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::new_allocator&lt;WasmEdge::AST::Instruction&gt;::deallocate (1 samples, 0.13%)</title><rect x="1184.1" y="101" width="1.5" height="15.0" fill="rgb(223,137,39)" rx="2" ry="2" />
+<text  x="1187.07" y="111.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_view_base&lt;void, WasmEdge::ErrCode&gt;::expected_view_base (9 samples, 1.13%)</title><rect x="972.1" y="261" width="13.3" height="15.0" fill="rgb(211,75,2)" rx="2" ry="2" />
+<text  x="975.09" y="271.5" ></text>
+</g>
+<g >
+<title>_int_free (1 samples, 0.13%)</title><rect x="1184.1" y="85" width="1.5" height="15.0" fill="rgb(250,80,15)" rx="2" ry="2" />
+<text  x="1187.07" y="95.5" ></text>
+</g>
+<g >
+<title>[libstdc++.so.6.0.28] (789 samples, 99.12%)</title><rect x="13.0" y="677" width="1169.6" height="15.0" fill="rgb(237,30,41)" rx="2" ry="2" />
+<text  x="15.96" y="687.5" >[libstdc++.so.6.0.28]</text>
+</g>
+<g >
+<title>schedule_tail (1 samples, 0.13%)</title><rect x="11.5" y="677" width="1.5" height="15.0" fill="rgb(235,21,29)" rx="2" ry="2" />
+<text  x="14.48" y="687.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runNeOp&lt;unsigned int&gt; (1 samples, 0.13%)</title><rect x="960.2" y="373" width="1.5" height="15.0" fill="rgb(249,139,6)" rx="2" ry="2" />
+<text  x="963.23" y="383.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (74 samples, 9.30%)</title><rect x="1055.1" y="341" width="109.7" height="15.0" fill="rgb(212,54,18)" rx="2" ry="2" />
+<text  x="1058.10" y="351.5" >std::vector&lt;W..</text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runDivOp&lt;double&gt; (3 samples, 0.38%)</title><rect x="712.7" y="373" width="4.4" height="15.0" fill="rgb(225,13,48)" rx="2" ry="2" />
+<text  x="715.66" y="383.5" ></text>
+</g>
+<g >
+<title>__GI___pthread_rwlock_rdlock (1 samples, 0.13%)</title><rect x="484.4" y="277" width="1.5" height="15.0" fill="rgb(252,21,49)" rx="2" ry="2" />
+<text  x="487.37" y="287.5" ></text>
+</g>
+<g >
+<title>operator (13 samples, 1.63%)</title><rect x="13.0" y="405" width="19.2" height="15.0" fill="rgb(216,137,27)" rx="2" ry="2" />
+<text  x="15.96" y="415.5" ></text>
+</g>
+<g >
+<title>std::uninitialized_copy&lt;WasmEdge::AST::Instruction const*, WasmEdge::AST::Instruction*&gt; (1 samples, 0.13%)</title><rect x="30.8" y="245" width="1.4" height="15.0" fill="rgb(218,23,53)" rx="2" ry="2" />
+<text  x="33.75" y="255.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::pop (1 samples, 0.13%)</title><rect x="554.0" y="357" width="1.5" height="15.0" fill="rgb(231,85,40)" rx="2" ry="2" />
+<text  x="557.05" y="367.5" ></text>
+</g>
+<g >
+<title>asm_exc_page_fault (1 samples, 0.13%)</title><rect x="27.8" y="165" width="1.5" height="15.0" fill="rgb(251,171,40)" rx="2" ry="2" />
+<text  x="30.79" y="175.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_base (8 samples, 1.01%)</title><rect x="740.8" y="309" width="11.9" height="15.0" fill="rgb(223,159,51)" rx="2" ry="2" />
+<text  x="743.83" y="319.5" ></text>
+</g>
+<g >
+<title>std::__detail::__variant::_Move_assign_base&lt;false, WasmEdge::Runtime::Instance::FunctionInstance::WasmFunction, WasmEdge::Symbol&lt;void&gt;, std::unique_ptr&lt;WasmEdge::Runtime::HostFunctionBase, std::default_delete&lt;WasmEdge::Runtime::HostFunctionBase&gt; &gt; &gt;::~_Move_assign_base (2 samples, 0.25%)</title><rect x="1184.1" y="421" width="2.9" height="15.0" fill="rgb(211,145,41)" rx="2" ry="2" />
+<text  x="1187.07" y="431.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_operations_base&lt;void, WasmEdge::ErrCode&gt;::expected_operations_base (29 samples, 3.64%)</title><rect x="647.4" y="277" width="43.0" height="15.0" fill="rgb(223,164,30)" rx="2" ry="2" />
+<text  x="650.44" y="287.5" >cxx2..</text>
+</g>
+<g >
+<title>WasmEdge::VM::Async&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (1 samples, 0.13%)</title><rect x="1182.6" y="661" width="1.5" height="15.0" fill="rgb(250,25,21)" rx="2" ry="2" />
+<text  x="1185.59" y="671.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_base (1 samples, 0.13%)</title><rect x="958.7" y="309" width="1.5" height="15.0" fill="rgb(252,191,7)" rx="2" ry="2" />
+<text  x="961.74" y="319.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::branchToLabel (7 samples, 0.88%)</title><rect x="436.9" y="325" width="10.4" height="15.0" fill="rgb(248,94,15)" rx="2" ry="2" />
+<text  x="439.93" y="335.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (2 samples, 0.25%)</title><rect x="943.9" y="341" width="3.0" height="15.0" fill="rgb(230,24,13)" rx="2" ry="2" />
+<text  x="946.92" y="351.5" ></text>
+</g>
+<g >
+<title>handle_mm_fault (1 samples, 0.13%)</title><rect x="27.8" y="117" width="1.5" height="15.0" fill="rgb(246,198,19)" rx="2" ry="2" />
+<text  x="30.79" y="127.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_base (1 samples, 0.13%)</title><rect x="752.7" y="309" width="1.5" height="15.0" fill="rgb(242,154,6)" rx="2" ry="2" />
+<text  x="755.69" y="319.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Validator::FormChecker::popType (1 samples, 0.13%)</title><rect x="1178.1" y="309" width="1.5" height="15.0" fill="rgb(210,207,43)" rx="2" ry="2" />
+<text  x="1181.14" y="319.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_base (29 samples, 3.64%)</title><rect x="647.4" y="293" width="43.0" height="15.0" fill="rgb(244,127,17)" rx="2" ry="2" />
+<text  x="650.44" y="303.5" >cxx2..</text>
+</g>
+<g >
+<title>unmap_vmas (2 samples, 0.25%)</title><rect x="1187.0" y="597" width="3.0" height="15.0" fill="rgb(249,19,34)" rx="2" ry="2" />
+<text  x="1190.04" y="607.5" ></text>
+</g>
+<g >
+<title>operator new (2 samples, 0.25%)</title><rect x="26.3" y="229" width="3.0" height="15.0" fill="rgb(238,142,18)" rx="2" ry="2" />
+<text  x="29.31" y="239.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::enterFunction (1 samples, 0.13%)</title><rect x="472.5" y="357" width="1.5" height="15.0" fill="rgb(225,154,11)" rx="2" ry="2" />
+<text  x="475.51" y="367.5" ></text>
+</g>
+<g >
+<title>std::_Vector_base&lt;std::pair&lt;unsigned int, WasmEdge::ValType&gt;, std::allocator&lt;std::pair&lt;unsigned int, WasmEdge::ValType&gt; &gt; &gt;::_M_deallocate (1 samples, 0.13%)</title><rect x="1185.6" y="133" width="1.4" height="15.0" fill="rgb(228,45,9)" rx="2" ry="2" />
+<text  x="1188.55" y="143.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::Instance::FunctionInstance::WasmFunction::~WasmFunction (2 samples, 0.25%)</title><rect x="1184.1" y="181" width="2.9" height="15.0" fill="rgb(243,107,2)" rx="2" ry="2" />
+<text  x="1187.07" y="191.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Loader::Loader::loadInstruction (5 samples, 0.63%)</title><rect x="17.4" y="309" width="7.4" height="15.0" fill="rgb(208,228,17)" rx="2" ry="2" />
+<text  x="20.41" y="319.5" ></text>
+</g>
+<g >
+<title>std::_Destroy&lt;std::unique_ptr&lt;WasmEdge::Runtime::Instance::FunctionInstance, std::default_delete&lt;WasmEdge::Runtime::Instance::FunctionInstance&gt; &gt;*, std::unique_ptr&lt;WasmEdge::Runtime::Instance::FunctionInstance, std::default_delete&lt;WasmEdge::Runtime::Instance::FunctionInstance&gt; &gt; &gt; (2 samples, 0.25%)</title><rect x="1184.1" y="565" width="2.9" height="15.0" fill="rgb(214,140,34)" rx="2" ry="2" />
+<text  x="1187.07" y="575.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runXorOp&lt;unsigned int&gt; (2 samples, 0.25%)</title><rect x="985.4" y="373" width="3.0" height="15.0" fill="rgb(248,168,20)" rx="2" ry="2" />
+<text  x="988.43" y="383.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runLoadOp&lt;unsigned int, 8u&gt; (2 samples, 0.25%)</title><rect x="617.8" y="373" width="3.0" height="15.0" fill="rgb(207,102,26)" rx="2" ry="2" />
+<text  x="620.79" y="383.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_storage_base&lt;void, WasmEdge::ErrCode, false, true&gt;::expected_storage_base (1 samples, 0.13%)</title><rect x="970.6" y="245" width="1.5" height="15.0" fill="rgb(254,169,29)" rx="2" ry="2" />
+<text  x="973.60" y="255.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_base (1 samples, 0.13%)</title><rect x="752.7" y="293" width="1.5" height="15.0" fill="rgb(227,7,17)" rx="2" ry="2" />
+<text  x="755.69" y="303.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (2 samples, 0.25%)</title><rect x="1187.0" y="693" width="3.0" height="15.0" fill="rgb(222,83,18)" rx="2" ry="2" />
+<text  x="1190.04" y="703.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VariadicUnion&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (3 samples, 0.38%)</title><rect x="758.6" y="341" width="4.5" height="15.0" fill="rgb(225,212,8)" rx="2" ry="2" />
+<text  x="761.62" y="351.5" ></text>
+</g>
+<g >
+<title>std::__uninitialized_copy_a&lt;WasmEdge::AST::Instruction const*, WasmEdge::AST::Instruction*, WasmEdge::AST::Instruction&gt; (1 samples, 0.13%)</title><rect x="30.8" y="261" width="1.4" height="15.0" fill="rgb(208,89,20)" rx="2" ry="2" />
+<text  x="33.75" y="271.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_base (1 samples, 0.13%)</title><rect x="958.7" y="293" width="1.5" height="15.0" fill="rgb(223,123,38)" rx="2" ry="2" />
+<text  x="961.74" y="303.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::getMemInstByIdx (104 samples, 13.07%)</title><rect x="245.7" y="373" width="154.2" height="15.0" fill="rgb(234,84,9)" rx="2" ry="2" />
+<text  x="248.70" y="383.5" >WasmEdge::Executor:..</text>
+</g>
+<g >
+<title>WasmEdge::VariadicUnion&lt;float, double, unsigned __int128, __int128, unsigned long __vector (12 samples, 1.51%)</title><rect x="629.6" y="261" width="17.8" height="15.0" fill="rgb(248,20,24)" rx="2" ry="2" />
+<text  x="632.65" y="271.5" ></text>
+</g>
+<g >
+<title>std::__invoke_impl&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (789 samples, 99.12%)</title><rect x="13.0" y="517" width="1169.6" height="15.0" fill="rgb(206,161,18)" rx="2" ry="2" />
+<text  x="15.96" y="527.5" >std::__invoke_impl&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsi..</text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::AST::Instruction, std::allocator&lt;WasmEdge::AST::Instruction&gt; &gt;::emplace_back&lt;WasmEdge::OpCode&amp;, unsigned long&amp;&gt; (4 samples, 0.50%)</title><rect x="26.3" y="309" width="5.9" height="15.0" fill="rgb(253,18,24)" rx="2" ry="2" />
+<text  x="29.31" y="319.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::getGlobInstByIdx (2 samples, 0.25%)</title><rect x="551.1" y="357" width="2.9" height="15.0" fill="rgb(232,43,15)" rx="2" ry="2" />
+<text  x="554.08" y="367.5" ></text>
+</g>
+<g >
+<title>cxx20::expected&lt;void, WasmEdge::ErrCode&gt;::expected (29 samples, 3.64%)</title><rect x="647.4" y="357" width="43.0" height="15.0" fill="rgb(216,193,23)" rx="2" ry="2" />
+<text  x="650.44" y="367.5" >cxx2..</text>
+</g>
+<g >
+<title>wasmedge_origin (795 samples, 99.87%)</title><rect x="11.5" y="725" width="1178.5" height="15.0" fill="rgb(253,167,35)" rx="2" ry="2" />
+<text  x="14.48" y="735.5" >wasmedge_origin</text>
+</g>
+<g >
+<title>std::_Vector_base&lt;WasmEdge::AST::Instruction, std::allocator&lt;WasmEdge::AST::Instruction&gt; &gt;::~_Vector_base (1 samples, 0.13%)</title><rect x="1184.1" y="149" width="1.5" height="15.0" fill="rgb(243,142,48)" rx="2" ry="2" />
+<text  x="1187.07" y="159.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_assign_base (2 samples, 0.25%)</title><rect x="985.4" y="325" width="3.0" height="15.0" fill="rgb(232,147,53)" rx="2" ry="2" />
+<text  x="988.43" y="335.5" ></text>
+</g>
+<g >
+<title>exc_page_fault (1 samples, 0.13%)</title><rect x="27.8" y="149" width="1.5" height="15.0" fill="rgb(211,26,44)" rx="2" ry="2" />
+<text  x="30.79" y="159.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_assign_base (8 samples, 1.01%)</title><rect x="740.8" y="325" width="11.9" height="15.0" fill="rgb(249,215,30)" rx="2" ry="2" />
+<text  x="743.83" y="335.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_assign_base (2 samples, 0.25%)</title><rect x="723.0" y="341" width="3.0" height="15.0" fill="rgb(215,227,24)" rx="2" ry="2" />
+<text  x="726.04" y="351.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_base (2 samples, 0.25%)</title><rect x="755.7" y="293" width="2.9" height="15.0" fill="rgb(241,122,44)" rx="2" ry="2" />
+<text  x="758.65" y="303.5" ></text>
+</g>
+<g >
+<title>release_pages (1 samples, 0.13%)</title><rect x="1188.5" y="501" width="1.5" height="15.0" fill="rgb(233,139,26)" rx="2" ry="2" />
+<text  x="1191.52" y="511.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Runtime::StackManager::Frame, std::allocator&lt;WasmEdge::Runtime::StackManager::Frame&gt; &gt;::empty (3 samples, 0.38%)</title><rect x="994.3" y="341" width="4.5" height="15.0" fill="rgb(227,94,52)" rx="2" ry="2" />
+<text  x="997.32" y="351.5" ></text>
+</g>
+<g >
+<title>std::_Vector_base&lt;WasmEdge::AST::Instruction, std::allocator&lt;WasmEdge::AST::Instruction&gt; &gt;::_M_deallocate (1 samples, 0.13%)</title><rect x="1184.1" y="133" width="1.5" height="15.0" fill="rgb(240,121,52)" rx="2" ry="2" />
+<text  x="1187.07" y="143.5" ></text>
+</g>
+<g >
+<title>std::thread::_Invoker&lt;std::tuple&lt;WasmEdge::VM::Async&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (789 samples, 99.12%)</title><rect x="13.0" y="645" width="1169.6" height="15.0" fill="rgb(248,108,30)" rx="2" ry="2" />
+<text  x="15.96" y="655.5" >std::thread::_Invoker&lt;std::tuple&lt;WasmEdge::VM::Async&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double,..</text>
+</g>
+<g >
+<title>finish_task_switch (1 samples, 0.13%)</title><rect x="11.5" y="661" width="1.5" height="15.0" fill="rgb(235,77,15)" rx="2" ry="2" />
+<text  x="14.48" y="671.5" ></text>
+</g>
+<g >
+<title>exit_mmap (2 samples, 0.25%)</title><rect x="1187.0" y="613" width="3.0" height="15.0" fill="rgb(215,144,24)" rx="2" ry="2" />
+<text  x="1190.04" y="623.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_operations_base&lt;void, WasmEdge::ErrCode&gt;::expected_operations_base (15 samples, 1.88%)</title><rect x="690.4" y="277" width="22.3" height="15.0" fill="rgb(220,61,35)" rx="2" ry="2" />
+<text  x="693.43" y="287.5" >c..</text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_assign_base (29 samples, 3.64%)</title><rect x="647.4" y="325" width="43.0" height="15.0" fill="rgb(206,78,48)" rx="2" ry="2" />
+<text  x="650.44" y="335.5" >cxx2..</text>
+</g>
+<g >
+<title>cxx20::detail::expected_view_base&lt;void, WasmEdge::ErrCode&gt;::expected_view_base (2 samples, 0.25%)</title><rect x="755.7" y="261" width="2.9" height="15.0" fill="rgb(228,29,0)" rx="2" ry="2" />
+<text  x="758.65" y="271.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::maybePopFrame (6 samples, 0.75%)</title><rect x="991.4" y="373" width="8.9" height="15.0" fill="rgb(231,218,46)" rx="2" ry="2" />
+<text  x="994.36" y="383.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runBrIfOp (39 samples, 4.90%)</title><rect x="399.9" y="373" width="57.8" height="15.0" fill="rgb(220,38,21)" rx="2" ry="2" />
+<text  x="402.87" y="383.5" >WasmEd..</text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::getTopN (6 samples, 0.75%)</title><rect x="946.9" y="357" width="8.9" height="15.0" fill="rgb(244,110,40)" rx="2" ry="2" />
+<text  x="949.88" y="367.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (1 samples, 0.13%)</title><rect x="1182.6" y="517" width="1.5" height="15.0" fill="rgb(229,18,0)" rx="2" ry="2" />
+<text  x="1185.59" y="527.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (83 samples, 10.43%)</title><rect x="1041.8" y="357" width="123.0" height="15.0" fill="rgb(244,106,51)" rx="2" ry="2" />
+<text  x="1044.76" y="367.5" >std::vector&lt;Was..</text>
+</g>
+<g >
+<title>mem_cgroup_charge (1 samples, 0.13%)</title><rect x="27.8" y="69" width="1.5" height="15.0" fill="rgb(244,24,43)" rx="2" ry="2" />
+<text  x="30.79" y="79.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Loader::Loader::loadModule (13 samples, 1.63%)</title><rect x="13.0" y="453" width="19.2" height="15.0" fill="rgb(247,159,34)" rx="2" ry="2" />
+<text  x="15.96" y="463.5" ></text>
+</g>
+<g >
+<title>std::allocator_traits&lt;std::allocator&lt;std::pair&lt;unsigned int, WasmEdge::ValType&gt; &gt; &gt;::deallocate (1 samples, 0.13%)</title><rect x="1185.6" y="117" width="1.4" height="15.0" fill="rgb(223,151,45)" rx="2" ry="2" />
+<text  x="1188.55" y="127.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runLocalTeeOp (33 samples, 4.15%)</title><rect x="906.9" y="373" width="48.9" height="15.0" fill="rgb(224,228,31)" rx="2" ry="2" />
+<text  x="909.86" y="383.5" >Wasm..</text>
+</g>
+<g >
+<title>cxx20::detail::expected_storage_base&lt;void, WasmEdge::ErrCode, false, true&gt;::expected_storage_base (6 samples, 0.75%)</title><rect x="961.7" y="245" width="8.9" height="15.0" fill="rgb(247,201,25)" rx="2" ry="2" />
+<text  x="964.71" y="255.5" ></text>
+</g>
+<g >
+<title>__mem_cgroup_charge (1 samples, 0.13%)</title><rect x="27.8" y="53" width="1.5" height="15.0" fill="rgb(225,178,24)" rx="2" ry="2" />
+<text  x="30.79" y="63.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_assign_base (1 samples, 0.13%)</title><rect x="752.7" y="325" width="1.5" height="15.0" fill="rgb(235,119,34)" rx="2" ry="2" />
+<text  x="755.69" y="335.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_storage_base&lt;void, WasmEdge::ErrCode, false, true&gt;::expected_storage_base (2 samples, 0.25%)</title><rect x="755.7" y="245" width="2.9" height="15.0" fill="rgb(249,61,48)" rx="2" ry="2" />
+<text  x="758.65" y="255.5" ></text>
+</g>
+<g >
+<title>__pthread_rwlock_rdlock_full (1 samples, 0.13%)</title><rect x="484.4" y="261" width="1.5" height="15.0" fill="rgb(210,68,51)" rx="2" ry="2" />
+<text  x="487.37" y="271.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (26 samples, 3.27%)</title><rect x="1003.2" y="357" width="38.6" height="15.0" fill="rgb(236,18,14)" rx="2" ry="2" />
+<text  x="1006.22" y="367.5" >std..</text>
+</g>
+<g >
+<title>perf_event_exec (1 samples, 0.13%)</title><rect x="10.0" y="581" width="1.5" height="15.0" fill="rgb(235,13,49)" rx="2" ry="2" />
+<text  x="13.00" y="591.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::new_allocator&lt;WasmEdge::AST::Instruction&gt;::deallocate (1 samples, 0.13%)</title><rect x="29.3" y="245" width="1.5" height="15.0" fill="rgb(221,175,18)" rx="2" ry="2" />
+<text  x="32.27" y="255.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Loader::Loader::loadExpression (12 samples, 1.51%)</title><rect x="14.4" y="341" width="17.8" height="15.0" fill="rgb(246,176,40)" rx="2" ry="2" />
+<text  x="17.45" y="351.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (60 samples, 7.54%)</title><rect x="777.9" y="341" width="88.9" height="15.0" fill="rgb(244,199,2)" rx="2" ry="2" />
+<text  x="780.89" y="351.5" >std::vecto..</text>
+</g>
+<g >
+<title>exec_binprm (1 samples, 0.13%)</title><rect x="10.0" y="629" width="1.5" height="15.0" fill="rgb(247,54,19)" rx="2" ry="2" />
+<text  x="13.00" y="639.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runCallOp (8 samples, 1.01%)</title><rect x="474.0" y="373" width="11.9" height="15.0" fill="rgb(226,154,48)" rx="2" ry="2" />
+<text  x="476.99" y="383.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_view_base&lt;void, WasmEdge::ErrCode&gt;::expected_view_base (15 samples, 1.88%)</title><rect x="690.4" y="261" width="22.3" height="15.0" fill="rgb(217,161,27)" rx="2" ry="2" />
+<text  x="693.43" y="271.5" >c..</text>
+</g>
+<g >
+<title>std::vector&lt;std::pair&lt;unsigned int, WasmEdge::ValType&gt;, std::allocator&lt;std::pair&lt;unsigned int, WasmEdge::ValType&gt; &gt; &gt;::~vector (1 samples, 0.13%)</title><rect x="1185.6" y="165" width="1.4" height="15.0" fill="rgb(210,90,10)" rx="2" ry="2" />
+<text  x="1188.55" y="175.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (1 samples, 0.13%)</title><rect x="472.5" y="309" width="1.5" height="15.0" fill="rgb(252,85,45)" rx="2" ry="2" />
+<text  x="475.51" y="319.5" ></text>
+</g>
+<g >
+<title>std::__do_visit&lt;false, true, std::__detail::__variant::_Variant_storage&lt;false, WasmEdge::Runtime::Instance::FunctionInstance::WasmFunction, WasmEdge::Symbol&lt;void&gt;, std::unique_ptr&lt;WasmEdge::Runtime::HostFunctionBase, std::default_delete&lt;WasmEdge::Runtime::HostFunctionBase&gt; &gt; &gt;::_M_reset_impl (2 samples, 0.25%)</title><rect x="1184.1" y="309" width="2.9" height="15.0" fill="rgb(254,94,22)" rx="2" ry="2" />
+<text  x="1187.07" y="319.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (2 samples, 0.25%)</title><rect x="720.1" y="357" width="2.9" height="15.0" fill="rgb(254,11,26)" rx="2" ry="2" />
+<text  x="723.08" y="367.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runSubOp&lt;unsigned int&gt; (9 samples, 1.13%)</title><rect x="972.1" y="373" width="13.3" height="15.0" fill="rgb(224,104,39)" rx="2" ry="2" />
+<text  x="975.09" y="383.5" ></text>
+</g>
+<g >
+<title>do_syscall_64 (1 samples, 0.13%)</title><rect x="10.0" y="693" width="1.5" height="15.0" fill="rgb(208,191,45)" rx="2" ry="2" />
+<text  x="13.00" y="703.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VariadicUnion&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (1 samples, 0.13%)</title><rect x="955.8" y="341" width="1.5" height="15.0" fill="rgb(219,34,6)" rx="2" ry="2" />
+<text  x="958.78" y="351.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runBrOp (7 samples, 0.88%)</title><rect x="457.7" y="373" width="10.4" height="15.0" fill="rgb(207,203,39)" rx="2" ry="2" />
+<text  x="460.69" y="383.5" ></text>
+</g>
+<g >
+<title>__GI___libc_malloc (1 samples, 0.13%)</title><rect x="18.9" y="261" width="1.5" height="15.0" fill="rgb(249,219,42)" rx="2" ry="2" />
+<text  x="21.89" y="271.5" ></text>
+</g>
+<g >
+<title>__sched_text_start (1 samples, 0.13%)</title><rect x="1182.6" y="405" width="1.5" height="15.0" fill="rgb(242,172,32)" rx="2" ry="2" />
+<text  x="1185.59" y="415.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_assign_base (1 samples, 0.13%)</title><rect x="752.7" y="341" width="1.5" height="15.0" fill="rgb(206,218,5)" rx="2" ry="2" />
+<text  x="755.69" y="351.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_base (8 samples, 1.01%)</title><rect x="740.8" y="293" width="11.9" height="15.0" fill="rgb(242,170,0)" rx="2" ry="2" />
+<text  x="743.83" y="303.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_base (2 samples, 0.25%)</title><rect x="723.0" y="309" width="3.0" height="15.0" fill="rgb(223,74,1)" rx="2" ry="2" />
+<text  x="726.04" y="319.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VariadicUnion&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (12 samples, 1.51%)</title><rect x="629.6" y="325" width="17.8" height="15.0" fill="rgb(228,84,44)" rx="2" ry="2" />
+<text  x="632.65" y="335.5" ></text>
+</g>
+<g >
+<title>cxx20::expected&lt;void, WasmEdge::ErrCode&gt;::expected (2 samples, 0.25%)</title><rect x="723.0" y="357" width="3.0" height="15.0" fill="rgb(235,212,50)" rx="2" ry="2" />
+<text  x="726.04" y="367.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_base (1 samples, 0.13%)</title><rect x="970.6" y="309" width="1.5" height="15.0" fill="rgb(206,146,53)" rx="2" ry="2" />
+<text  x="973.60" y="319.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::Instance::ModuleInstance::~ModuleInstance (2 samples, 0.25%)</title><rect x="1184.1" y="613" width="2.9" height="15.0" fill="rgb(216,23,49)" rx="2" ry="2" />
+<text  x="1187.07" y="623.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Runtime::StackManager::getTop (2 samples, 0.25%)</title><rect x="943.9" y="357" width="3.0" height="15.0" fill="rgb(225,129,48)" rx="2" ry="2" />
+<text  x="946.92" y="367.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Validator::FormChecker::checkInstrs (5 samples, 0.63%)</title><rect x="1175.2" y="373" width="7.4" height="15.0" fill="rgb(253,229,7)" rx="2" ry="2" />
+<text  x="1178.18" y="383.5" ></text>
+</g>
+<g >
+<title>std::default_delete&lt;WasmEdge::Runtime::Instance::ModuleInstance&gt;::operator (2 samples, 0.25%)</title><rect x="1184.1" y="629" width="2.9" height="15.0" fill="rgb(250,115,6)" rx="2" ry="2" />
+<text  x="1187.07" y="639.5" ></text>
+</g>
+<g >
+<title>cxx20::expected&lt;void, WasmEdge::ErrCode&gt;::expected (7 samples, 0.88%)</title><rect x="1164.8" y="373" width="10.4" height="15.0" fill="rgb(248,178,52)" rx="2" ry="2" />
+<text  x="1167.80" y="383.5" ></text>
+</g>
+<g >
+<title>_int_free (1 samples, 0.13%)</title><rect x="1185.6" y="85" width="1.4" height="15.0" fill="rgb(247,204,45)" rx="2" ry="2" />
+<text  x="1188.55" y="95.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;std::unique_ptr&lt;WasmEdge::Runtime::Instance::FunctionInstance, std::default_delete&lt;WasmEdge::Runtime::Instance::FunctionInstance&gt; &gt;, std::allocator&lt;std::unique_ptr&lt;WasmEdge::Runtime::Instance::FunctionInstance, std::default_delete&lt;WasmEdge::Runtime::Instance::FunctionInstance&gt; &gt; &gt; &gt;::~vector (2 samples, 0.25%)</title><rect x="1184.1" y="581" width="2.9" height="15.0" fill="rgb(219,164,19)" rx="2" ry="2" />
+<text  x="1187.07" y="591.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_view_base&lt;void, WasmEdge::ErrCode&gt;::expected_view_base (6 samples, 0.75%)</title><rect x="961.7" y="261" width="8.9" height="15.0" fill="rgb(231,169,31)" rx="2" ry="2" />
+<text  x="964.71" y="271.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runLocalSetOp (27 samples, 3.39%)</title><rect x="866.8" y="373" width="40.1" height="15.0" fill="rgb(225,104,2)" rx="2" ry="2" />
+<text  x="869.83" y="383.5" >Was..</text>
+</g>
+<g >
+<title>WasmEdge::Validator::FormChecker::checkExpr (5 samples, 0.63%)</title><rect x="1175.2" y="389" width="7.4" height="15.0" fill="rgb(238,41,42)" rx="2" ry="2" />
+<text  x="1178.18" y="399.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (1 samples, 0.13%)</title><rect x="554.0" y="325" width="1.5" height="15.0" fill="rgb(244,210,54)" rx="2" ry="2" />
+<text  x="557.05" y="335.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::runStoreOp&lt;unsigned int, 32u&gt; (6 samples, 0.75%)</title><rect x="620.8" y="373" width="8.8" height="15.0" fill="rgb(232,228,30)" rx="2" ry="2" />
+<text  x="623.75" y="383.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_assign_base (2 samples, 0.25%)</title><rect x="755.7" y="341" width="2.9" height="15.0" fill="rgb(237,19,41)" rx="2" ry="2" />
+<text  x="758.65" y="351.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VM::VM::unsafeExecute (771 samples, 96.86%)</title><rect x="32.2" y="453" width="1143.0" height="15.0" fill="rgb(238,171,40)" rx="2" ry="2" />
+<text  x="35.24" y="463.5" >WasmEdge::VM::VM::unsafeExecute</text>
+</g>
+<g >
+<title>__x64_sys_execve (1 samples, 0.13%)</title><rect x="10.0" y="677" width="1.5" height="15.0" fill="rgb(239,145,29)" rx="2" ry="2" />
+<text  x="13.00" y="687.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_assign_base (2 samples, 0.25%)</title><rect x="723.0" y="325" width="3.0" height="15.0" fill="rgb(207,27,12)" rx="2" ry="2" />
+<text  x="726.04" y="335.5" ></text>
+</g>
+<g >
+<title>free_unref_page_commit (1 samples, 0.13%)</title><rect x="1188.5" y="469" width="1.5" height="15.0" fill="rgb(236,146,41)" rx="2" ry="2" />
+<text  x="1191.52" y="479.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_assign_base (2 samples, 0.25%)</title><rect x="985.4" y="341" width="3.0" height="15.0" fill="rgb(252,47,24)" rx="2" ry="2" />
+<text  x="988.43" y="351.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_assign_base (15 samples, 1.88%)</title><rect x="690.4" y="325" width="22.3" height="15.0" fill="rgb(238,178,38)" rx="2" ry="2" />
+<text  x="693.43" y="335.5" >c..</text>
+</g>
+<g >
+<title>zap_pte_range.isra.0 (2 samples, 0.25%)</title><rect x="1187.0" y="549" width="3.0" height="15.0" fill="rgb(229,42,28)" rx="2" ry="2" />
+<text  x="1190.04" y="559.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_storage_base&lt;void, WasmEdge::ErrCode, false, true&gt;::expected_storage_base (9 samples, 1.13%)</title><rect x="972.1" y="245" width="13.3" height="15.0" fill="rgb(227,103,11)" rx="2" ry="2" />
+<text  x="975.09" y="255.5" ></text>
+</g>
+<g >
+<title>std::shared_future&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (1 samples, 0.13%)</title><rect x="1182.6" y="645" width="1.5" height="15.0" fill="rgb(249,75,33)" rx="2" ry="2" />
+<text  x="1185.59" y="655.5" ></text>
+</g>
+<g >
+<title>_int_malloc (1 samples, 0.13%)</title><rect x="18.9" y="245" width="1.5" height="15.0" fill="rgb(211,43,27)" rx="2" ry="2" />
+<text  x="21.89" y="255.5" ></text>
+</g>
+<g >
+<title>std::__invoke_impl&lt;std::__detail::__variant::__variant_cookie, std::__detail::__variant::_Variant_storage&lt;false, WasmEdge::Runtime::Instance::FunctionInstance::WasmFunction, WasmEdge::Symbol&lt;void&gt;, std::unique_ptr&lt;WasmEdge::Runtime::HostFunctionBase, std::default_delete&lt;WasmEdge::Runtime::HostFunctionBase&gt; &gt; &gt;::_M_reset_impl (2 samples, 0.25%)</title><rect x="1184.1" y="229" width="2.9" height="15.0" fill="rgb(226,104,4)" rx="2" ry="2" />
+<text  x="1187.07" y="239.5" ></text>
+</g>
+<g >
+<title>std::__invoke&lt;WasmEdge::VM::Async&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (789 samples, 99.12%)</title><rect x="13.0" y="613" width="1169.6" height="15.0" fill="rgb(243,182,25)" rx="2" ry="2" />
+<text  x="15.96" y="623.5" >std::__invoke&lt;WasmEdge::VM::Async&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128,..</text>
+</g>
+<g >
+<title>futex_wait (1 samples, 0.13%)</title><rect x="1182.6" y="453" width="1.5" height="15.0" fill="rgb(234,192,35)" rx="2" ry="2" />
+<text  x="1185.59" y="463.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_view_base&lt;void, WasmEdge::ErrCode&gt;::expected_view_base (7 samples, 0.88%)</title><rect x="1164.8" y="277" width="10.4" height="15.0" fill="rgb(226,6,37)" rx="2" ry="2" />
+<text  x="1167.80" y="287.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_assign_base (1 samples, 0.13%)</title><rect x="957.3" y="341" width="1.4" height="15.0" fill="rgb(234,178,5)" rx="2" ry="2" />
+<text  x="960.26" y="351.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_copy_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_copy_assign_base (9 samples, 1.13%)</title><rect x="972.1" y="325" width="13.3" height="15.0" fill="rgb(248,139,26)" rx="2" ry="2" />
+<text  x="975.09" y="335.5" ></text>
+</g>
+<g >
+<title>asm_sysvec_reschedule_ipi (1 samples, 0.13%)</title><rect x="24.8" y="309" width="1.5" height="15.0" fill="rgb(224,162,24)" rx="2" ry="2" />
+<text  x="27.82" y="319.5" ></text>
+</g>
+<g >
+<title>std::__atomic_futex_unsigned_base::_M_futex_wait_until (1 samples, 0.13%)</title><rect x="1182.6" y="549" width="1.5" height="15.0" fill="rgb(233,194,5)" rx="2" ry="2" />
+<text  x="1185.59" y="559.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_base (2 samples, 0.25%)</title><rect x="755.7" y="309" width="2.9" height="15.0" fill="rgb(233,161,15)" rx="2" ry="2" />
+<text  x="758.65" y="319.5" ></text>
+</g>
+<g >
+<title>std::default_delete&lt;WasmEdge::Runtime::Instance::FunctionInstance&gt;::operator (2 samples, 0.25%)</title><rect x="1184.1" y="485" width="2.9" height="15.0" fill="rgb(219,105,54)" rx="2" ry="2" />
+<text  x="1187.07" y="495.5" ></text>
+</g>
+<g >
+<title>std::__apply_impl&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (789 samples, 99.12%)</title><rect x="13.0" y="549" width="1169.6" height="15.0" fill="rgb(238,8,34)" rx="2" ry="2" />
+<text  x="15.96" y="559.5" >std::__apply_impl&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsig..</text>
+</g>
+<g >
+<title>std::allocator_traits&lt;std::allocator&lt;WasmEdge::AST::Instruction&gt; &gt;::deallocate (1 samples, 0.13%)</title><rect x="29.3" y="261" width="1.5" height="15.0" fill="rgb(219,195,1)" rx="2" ry="2" />
+<text  x="32.27" y="271.5" ></text>
+</g>
+<g >
+<title>main (3 samples, 0.38%)</title><rect x="1182.6" y="677" width="4.4" height="15.0" fill="rgb(236,206,5)" rx="2" ry="2" />
+<text  x="1185.59" y="687.5" ></text>
+</g>
+<g >
+<title>WasmEdge::AST::Instruction::Instruction (1 samples, 0.13%)</title><rect x="30.8" y="197" width="1.4" height="15.0" fill="rgb(235,215,31)" rx="2" ry="2" />
+<text  x="33.75" y="207.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_view_base&lt;void, WasmEdge::ErrCode&gt;::expected_view_base (2 samples, 0.25%)</title><rect x="985.4" y="261" width="3.0" height="15.0" fill="rgb(236,8,44)" rx="2" ry="2" />
+<text  x="988.43" y="271.5" ></text>
+</g>
+<g >
+<title>WasmEdge::FileMgr::readU32 (1 samples, 0.13%)</title><rect x="23.3" y="277" width="1.5" height="15.0" fill="rgb(243,110,18)" rx="2" ry="2" />
+<text  x="26.34" y="287.5" ></text>
+</g>
+<g >
+<title>std::unique_ptr&lt;WasmEdge::Runtime::Instance::FunctionInstance, std::default_delete&lt;WasmEdge::Runtime::Instance::FunctionInstance&gt; &gt;::~unique_ptr (2 samples, 0.25%)</title><rect x="1184.1" y="501" width="2.9" height="15.0" fill="rgb(213,8,14)" rx="2" ry="2" />
+<text  x="1187.07" y="511.5" ></text>
+</g>
+<g >
+<title>__gnu_cxx::__normal_iterator&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (2 samples, 0.25%)</title><rect x="943.9" y="309" width="3.0" height="15.0" fill="rgb(242,111,4)" rx="2" ry="2" />
+<text  x="946.92" y="319.5" ></text>
+</g>
+<g >
+<title>std::thread::_Invoker&lt;std::tuple&lt;WasmEdge::VM::Async&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (789 samples, 99.12%)</title><rect x="13.0" y="629" width="1169.6" height="15.0" fill="rgb(252,73,43)" rx="2" ry="2" />
+<text  x="15.96" y="639.5" >std::thread::_Invoker&lt;std::tuple&lt;WasmEdge::VM::Async&lt;cxx20::expected&lt;std::vector&lt;std::pair&lt;WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double,..</text>
+</g>
+<g >
+<title>WasmEdge::Variant&lt;unsigned int, int, unsigned long, long, float, double, unsigned __int128, __int128, unsigned long __vector (3 samples, 0.38%)</title><rect x="736.4" y="357" width="4.4" height="15.0" fill="rgb(227,168,13)" rx="2" ry="2" />
+<text  x="739.38" y="367.5" ></text>
+</g>
+<g >
+<title>std::vector&lt;WasmEdge::AST::Instruction, std::allocator&lt;WasmEdge::AST::Instruction&gt; &gt;::_M_realloc_insert&lt;WasmEdge::OpCode&amp;, unsigned long&amp;&gt; (4 samples, 0.50%)</title><rect x="26.3" y="293" width="5.9" height="15.0" fill="rgb(206,188,33)" rx="2" ry="2" />
+<text  x="29.31" y="303.5" ></text>
+</g>
+<g >
+<title>entry_SYSCALL_64_after_hwframe (2 samples, 0.25%)</title><rect x="1187.0" y="709" width="3.0" height="15.0" fill="rgb(251,75,31)" rx="2" ry="2" />
+<text  x="1190.04" y="719.5" ></text>
+</g>
+<g >
+<title>WasmEdge::Executor::Executor::execute (306 samples, 38.44%)</title><rect x="176.0" y="389" width="453.6" height="15.0" fill="rgb(239,195,25)" rx="2" ry="2" />
+<text  x="179.03" y="399.5" >WasmEdge::Executor::Executor::execute</text>
+</g>
+<g >
+<title>schedule (1 samples, 0.13%)</title><rect x="1182.6" y="421" width="1.5" height="15.0" fill="rgb(217,178,25)" rx="2" ry="2" />
+<text  x="1185.59" y="431.5" ></text>
+</g>
+<g >
+<title>__x64_sys_futex (1 samples, 0.13%)</title><rect x="1182.6" y="485" width="1.5" height="15.0" fill="rgb(246,24,33)" rx="2" ry="2" />
+<text  x="1185.59" y="495.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_assign_base (7 samples, 0.88%)</title><rect x="1164.8" y="357" width="10.4" height="15.0" fill="rgb(214,198,23)" rx="2" ry="2" />
+<text  x="1167.80" y="367.5" ></text>
+</g>
+<g >
+<title>WasmEdge::VariadicUnion&lt;long, float, double, unsigned __int128, __int128, unsigned long __vector (12 samples, 1.51%)</title><rect x="629.6" y="277" width="17.8" height="15.0" fill="rgb(233,104,40)" rx="2" ry="2" />
+<text  x="632.65" y="287.5" ></text>
+</g>
+<g >
+<title>std::_Destroy&lt;std::unique_ptr&lt;WasmEdge::Runtime::Instance::FunctionInstance, std::default_delete&lt;WasmEdge::Runtime::Instance::FunctionInstance&gt; &gt; &gt; (2 samples, 0.25%)</title><rect x="1184.1" y="517" width="2.9" height="15.0" fill="rgb(253,35,54)" rx="2" ry="2" />
+<text  x="1187.07" y="527.5" ></text>
+</g>
+<g >
+<title>cxx20::detail::expected_move_assign_base&lt;void, WasmEdge::ErrCode, true&gt;::expected_move_assign_base (1 samples, 0.13%)</title><rect x="970.6" y="341" width="1.5" height="15.0" fill="rgb(252,87,25)" rx="2" ry="2" />
+<text  x="973.60" y="351.5" ></text>
+</g>
+<g >
+<title>__mod_lruvec_state (1 samples, 0.13%)</title><rect x="1187.0" y="501" width="1.5" height="15.0" fill="rgb(236,79,20)" rx="2" ry="2" />
+<text  x="1190.04" y="511.5" ></text>
+</g>
+</g>
+</svg>
