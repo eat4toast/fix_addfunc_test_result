@@ -1,0 +1,74 @@
+shh@shh:~/initialize_test/test_emcc$ sudo perf stat wasmedge_origin gemm_from_emcc.wasm 
+33315
+ Performance counter stats for 'wasmedge_origin gemm_from_emcc.wasm':
+
+          3,378.77 msec task-clock                #    1.000 CPUs utilized          
+                18      context-switches          #    5.327 /sec                   
+                 1      cpu-migrations            #    0.296 /sec                   
+             1,594      page-faults               #  471.770 /sec                   
+    15,669,863,926      cycles                    #    4.638 GHz                    
+    47,176,687,649      instructions              #    3.01  insn per cycle         
+     9,337,127,584      branches                  #    2.763 G/sec                  
+        57,151,903      branch-misses             #    0.61% of all branches        
+    78,323,800,295      slots                     #   23.181 G/sec                  
+    46,366,212,258      topdown-retiring          #     59.2% retiring              
+     7,985,956,107      topdown-bad-spec          #     10.2% bad speculation       
+    21,498,747,583      topdown-fe-bound          #     27.4% frontend bound        
+     2,472,884,341      topdown-be-bound          #      3.2% backend bound         
+
+       3.379184783 seconds time elapsed
+
+       3.379128000 seconds user
+       0.000000000 seconds sys
+
+
+shh@shh:~/initialize_test/test_emcc$ sudo perf stat wasmedge_origin gemm_from_emcc.wasm 
+33315
+ Performance counter stats for 'wasmedge_origin gemm_from_emcc.wasm':
+
+          3,375.03 msec task-clock                #    1.000 CPUs utilized          
+                16      context-switches          #    4.741 /sec                   
+                 2      cpu-migrations            #    0.593 /sec                   
+             1,596      page-faults               #  472.884 /sec                   
+    15,730,320,461      cycles                    #    4.661 GHz                    
+    47,176,372,324      instructions              #    3.00  insn per cycle         
+     9,337,078,002      branches                  #    2.767 G/sec                  
+        57,147,031      branch-misses             #    0.61% of all branches        
+    78,634,973,915      slots                     #   23.299 G/sec                  
+    46,553,150,739      topdown-retiring          #     59.1% retiring              
+     7,709,944,720      topdown-bad-spec          #      9.8% bad speculation       
+    21,276,305,007      topdown-fe-bound          #     27.0% frontend bound        
+     3,223,403,869      topdown-be-bound          #      4.1% backend bound         
+
+       3.375525034 seconds time elapsed
+
+       3.371486000 seconds user
+       0.003999000 seconds sys
+
+
+shh@shh:~/initialize_test/test_emcc$ sudo perf stat wasmedge_origin gemm_from_emcc.wasm 
+33315
+ Performance counter stats for 'wasmedge_origin gemm_from_emcc.wasm':
+
+          3,420.92 msec task-clock                #    1.000 CPUs utilized          
+                17      context-switches          #    4.969 /sec                   
+                 5      cpu-migrations            #    1.462 /sec                   
+             1,593      page-faults               #  465.664 /sec                   
+    15,903,522,446      cycles                    #    4.649 GHz                    
+    47,177,469,109      instructions              #    2.97  insn per cycle         
+     9,337,267,598      branches                  #    2.729 G/sec                  
+        48,321,053      branch-misses             #    0.52% of all branches        
+    79,498,476,215      slots                     #   23.239 G/sec                  
+    47,067,058,094      topdown-retiring          #     59.2% retiring              
+     8,417,731,920      topdown-bad-spec          #     10.6% bad speculation       
+    20,574,722,073      topdown-fe-bound          #     25.9% frontend bound        
+     3,441,040,733      topdown-be-bound          #      4.3% backend bound         
+
+       3.421479086 seconds time elapsed
+
+       3.413430000 seconds user
+       0.008003000 seconds sys
+
+
+shh@shh:~/initialize_test/test_emcc$ 
+

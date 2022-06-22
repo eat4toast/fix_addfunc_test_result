@@ -1,0 +1,79 @@
+shh@shh:~/Downloads/rubywasn/ruby-head-wasm32-unknown-wasi-full/head-wasm32-unknown-wasi-full/usr/local/bin$ sudo perf stat  wasmedge_origin --dir .:. ./ruby test_base64.rb
+`RubyGems' were not loaded.
+`error_highlight' was not loaded.
+`did_you_mean' was not loaded.
+
+ Performance counter stats for 'wasmedge_origin --dir .:. ./ruby test_base64.rb':
+
+         13,867.18 msec task-clock                #    0.963 CPUs utilized          
+               168      context-switches          #   12.115 /sec                   
+                 3      cpu-migrations            #    0.216 /sec                   
+           112,162      page-faults               #    8.088 K/sec                  
+    64,417,301,959      cycles                    #    4.645 GHz                    
+   176,960,777,323      instructions              #    2.75  insn per cycle         
+    37,112,180,925      branches                  #    2.676 G/sec                  
+       310,396,402      branch-misses             #    0.84% of all branches        
+   322,025,076,625      slots                     #   23.222 G/sec                  
+   152,923,899,928      topdown-retiring          #     46.3% retiring              
+    74,433,167,863      topdown-bad-spec          #     22.5% bad speculation       
+    94,822,849,519      topdown-fe-bound          #     28.7% frontend bound        
+     8,018,985,825      topdown-be-bound          #      2.4% backend bound         
+
+      14.404161150 seconds time elapsed
+
+      13.783135000 seconds user
+       0.088071000 seconds sys
+
+
+shh@shh:~/Downloads/rubywasn/ruby-head-wasm32-unknown-wasi-full/head-wasm32-unknown-wasi-full/usr/local/bin$ sudo perf stat  wasmedge_origin --dir .:. ./ruby test_base64.rb
+`RubyGems' were not loaded.
+`error_highlight' was not loaded.
+`did_you_mean' was not loaded.
+
+ Performance counter stats for 'wasmedge_origin --dir .:. ./ruby test_base64.rb':
+
+         13,811.54 msec task-clock                #    1.000 CPUs utilized          
+                90      context-switches          #    6.516 /sec                   
+                 2      cpu-migrations            #    0.145 /sec                   
+           112,153      page-faults               #    8.120 K/sec                  
+    64,566,178,682      cycles                    #    4.675 GHz                    
+   176,941,695,137      instructions              #    2.74  insn per cycle         
+    37,108,504,090      branches                  #    2.687 G/sec                  
+       317,373,925      branch-misses             #    0.86% of all branches        
+   322,799,733,265      slots                     #   23.372 G/sec                  
+   154,404,129,240      topdown-retiring          #     46.9% retiring              
+    68,290,810,166      topdown-bad-spec          #     20.7% bad speculation       
+    97,753,065,681      topdown-fe-bound          #     29.7% frontend bound        
+     9,033,205,531      topdown-be-bound          #      2.7% backend bound         
+
+      13.812810212 seconds time elapsed
+
+      13.719844000 seconds user
+       0.091998000 seconds sys
+
+
+shh@shh:~/Downloads/rubywasn/ruby-head-wasm32-unknown-wasi-full/head-wasm32-unknown-wasi-full/usr/local/bin$ sudo perf stat  wasmedge_origin --dir .:. ./ruby test_base64.rb
+`RubyGems' were not loaded.
+`error_highlight' was not loaded.
+`did_you_mean' was not loaded.
+
+ Performance counter stats for 'wasmedge_origin --dir .:. ./ruby test_base64.rb':
+
+         14,107.16 msec task-clock                #    1.000 CPUs utilized          
+                77      context-switches          #    5.458 /sec                   
+                 4      cpu-migrations            #    0.284 /sec                   
+           112,151      page-faults               #    7.950 K/sec                  
+    64,930,217,155      cycles                    #    4.603 GHz                    
+   176,935,994,916      instructions              #    2.73  insn per cycle         
+    37,107,793,811      branches                  #    2.630 G/sec                  
+       309,167,141      branch-misses             #    0.83% of all branches        
+   322,053,217,190      slots                     #   22.829 G/sec                  
+   156,275,855,676      topdown-retiring          #     47.5% retiring              
+    65,609,856,176      topdown-bad-spec          #     19.9% bad speculation       
+    98,501,574,700      topdown-fe-bound          #     29.9% frontend bound        
+     8,931,914,020      topdown-be-bound          #      2.7% backend bound         
+
+      14.108209660 seconds time elapsed
+
+      14.019435000 seconds user
+       0.087996000 seconds sys

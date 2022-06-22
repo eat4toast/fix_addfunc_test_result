@@ -1,0 +1,72 @@
+shh@shh:~/initialize_test$ sudo perf stat wasmedge_new gemm_from_emcc.wasm 
+33315
+ Performance counter stats for 'wasmedge_new gemm_from_emcc.wasm':
+
+          3,302.99 msec task-clock                #    1.000 CPUs utilized          
+                 9      context-switches          #    2.725 /sec                   
+                 1      cpu-migrations            #    0.303 /sec                   
+             1,591      page-faults               #  481.684 /sec                   
+    15,444,688,969      cycles                    #    4.676 GHz                    
+    47,176,239,103      instructions              #    3.05  insn per cycle         
+     9,337,048,026      branches                  #    2.827 G/sec                  
+        57,779,445      branch-misses             #    0.62% of all branches        
+    77,213,150,690      slots                     #   23.377 G/sec                  
+    46,618,291,180      topdown-retiring          #     60.4% retiring              
+     8,175,642,500      topdown-bad-spec          #     10.6% bad speculation       
+    18,469,669,831      topdown-fe-bound          #     23.9% frontend bound        
+     3,949,599,550      topdown-be-bound          #      5.1% backend bound         
+
+       3.303403084 seconds time elapsed
+
+       3.299391000 seconds user
+       0.003999000 seconds sys
+
+
+shh@shh:~/initialize_test$ sudo perf stat wasmedge_new gemm_from_emcc.wasm 
+33315
+ Performance counter stats for 'wasmedge_new gemm_from_emcc.wasm':
+
+          3,306.96 msec task-clock                #    1.000 CPUs utilized          
+                18      context-switches          #    5.443 /sec                   
+                 4      cpu-migrations            #    1.210 /sec                   
+             1,594      page-faults               #  482.014 /sec                   
+    15,425,629,888      cycles                    #    4.665 GHz                    
+    47,176,553,900      instructions              #    3.06  insn per cycle         
+     9,337,105,470      branches                  #    2.823 G/sec                  
+        56,907,140      branch-misses             #    0.61% of all branches        
+    77,101,771,620      slots                     #   23.315 G/sec                  
+    46,639,472,740      topdown-retiring          #     59.9% retiring              
+     9,070,662,174      topdown-bad-spec          #     11.6% bad speculation       
+    18,443,280,782      topdown-fe-bound          #     23.7% frontend bound        
+     3,727,042,260      topdown-be-bound          #      4.8% backend bound         
+
+       3.307404626 seconds time elapsed
+
+       3.299243000 seconds user
+       0.007998000 seconds sys
+
+
+shh@shh:~/initialize_test$ sudo perf stat wasmedge_new gemm_from_emcc.wasm 
+33315
+ Performance counter stats for 'wasmedge_new gemm_from_emcc.wasm':
+
+          3,315.83 msec task-clock                #    1.000 CPUs utilized          
+                13      context-switches          #    3.921 /sec                   
+                 3      cpu-migrations            #    0.905 /sec                   
+             1,596      page-faults               #  481.327 /sec                   
+    15,458,207,450      cycles                    #    4.662 GHz                    
+    47,176,385,160      instructions              #    3.05  insn per cycle         
+     9,337,082,620      branches                  #    2.816 G/sec                  
+        57,043,033      branch-misses             #    0.61% of all branches        
+    77,187,472,435      slots                     #   23.278 G/sec                  
+    46,301,398,249      topdown-retiring          #     60.0% retiring              
+     8,778,183,139      topdown-bad-spec          #     11.4% bad speculation       
+    18,463,582,318      topdown-fe-bound          #     23.9% frontend bound        
+     3,644,308,725      topdown-be-bound          #      4.7% backend bound         
+
+       3.316453996 seconds time elapsed
+
+       3.316443000 seconds user
+       0.000000000 seconds sys
+
+
